@@ -530,6 +530,17 @@ impl App {
                 app.backup_step = LAST_STEP;
                 app.start_backup();
             }
+            if let Ok(demo) = std::env::var("ZEBACK_DEMO_USER") {
+                // Für Bildschirmfotos (z. B. in der README): neutrale Namen statt der echten
+                // anzeigen, in der Form "Benutzer@Computer".
+                let (user, computer) = demo.split_once('@').unwrap_or((demo.as_str(), "BUERO-PC"));
+                app.user_name = user.to_string();
+                app.computer_name = computer.to_string();
+                for profile in &mut app.profiles {
+                    profile.name = user.to_string();
+                    profile.dir = PathBuf::from(format!("C:\\Users\\{user}"));
+                }
+            }
             if let Ok(version) = std::env::var("ZEBACK_UPDATE") {
                 // So tun, als läge diese Version bereit (für Bildschirmfotos des Hinweises).
                 app.update = Some(Release {
