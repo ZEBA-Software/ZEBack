@@ -9,6 +9,8 @@
 
 # Wird von build.rs bei jedem Bau aus src/logo.rs erzeugt
 /assets/ZEBack.ico
+/assets/installer-banner.bmp
+/assets/installer-dialog.bmp
 
 # Editoren und Windows
 /.vscode

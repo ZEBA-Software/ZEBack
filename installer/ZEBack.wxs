@@ -58,6 +58,24 @@
       <ComponentRef Id="StartMenuEntry" />
     </Feature>
 
+    <!--
+      Assistent mit Bildern und Lizenz. Die Bilder erzeugt build.rs aus dem Logo; den Lizenztext
+      wandelt das Bauskript aus der Datei LICENSE um. Auf der letzten Seite lässt sich ZEBack
+      gleich starten. Ein Update aus dem Programm heraus läuft mit "/passive" und zeigt nur den
+      Fortschritt, keine dieser Seiten.
+    -->
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.BannerPath)" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.DialogPath)" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicensePath)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="ZEBack jetzt starten" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#ZEBackExe]" />
+    <CustomAction Id="LaunchApplication" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" />
+    <UI>
+      <UIRef Id="WixUI_Minimal" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+    </UI>
+
     <!-- Symbol in der Liste der installierten Apps -->
     <Icon Id="ZEBack.ico" SourceFile="$(var.IconPath)" />
     <Property Id="ARPPRODUCTICON" Value="ZEBack.ico" />
