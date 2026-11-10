@@ -73,6 +73,21 @@ Das Skript baut beide Architekturen und legt EXE und MSI in `dist\` ab. Mit `-Sk
 nur die Installer aus den vorhandenen EXE-Dateien erzeugt. Die Versionsnummer kommt aus
 `Cargo.toml`.
 
+### Veröffentlichen (Updates)
+
+ZEBack fragt beim Start bei GitHub nach der neuesten Veröffentlichung dieses Repositorys und
+bietet an, sie herunterzuladen und zu installieren. Damit das funktioniert, braucht jede neue
+Version ein Release:
+
+1. Versionsnummer in `Cargo.toml` erhöhen, committen und hochladen.
+2. Installer bauen: `powershell -File .\installer\build-msi.ps1`
+3. Auf GitHub ein Release mit der Marke `v<Version>` anlegen (z. B. `v0.16.0`) und die beiden
+   Dateien `ZEBack-<Version>-x64.msi` und `ZEBack-<Version>-arm64.msi` aus `dist\` anhängen.
+   Die Dateinamen müssen genau so bleiben – daran erkennt ZEBack den passenden Installer.
+
+Der Text des Releases erscheint im Programm als Beschreibung der Neuerungen. Heruntergeladene
+Installer werden gegen die Prüfsumme geprüft, die GitHub zu jeder Datei angibt.
+
 ## Aufbau
 
 | Datei | Inhalt |

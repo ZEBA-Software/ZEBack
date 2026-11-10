@@ -63,8 +63,8 @@
     <Property Id="ARPPRODUCTICON" Value="ZEBack.ico" />
 
     <!-- Unter "Apps" nur Deinstallieren anbieten (kein Ändern/Reparieren-Dialog). -->
-    <Property Id="ARPURLINFOABOUT" Value="https://zeba.xyz" />
-    <Property Id="ARPHELPLINK" Value="https://zeba.xyz" />
+    <Property Id="ARPURLINFOABOUT" Value="https://zeba-software.de" />
+    <Property Id="ARPHELPLINK" Value="https://zeba-software.de" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPCOMMENTS" Value="Backup und Wiederherstellung: Benutzerprofile, Laufwerke, Systemabbilder" />

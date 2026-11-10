@@ -37,7 +37,7 @@ use crate::widgets::{self, Icon, Kind, Mark};
 
 const MAX_LOG_LINES: usize = 2000;
 /// Website des Herstellers; öffnet sich beim Klick auf den Herstellernamen.
-const VENDOR_URL: &str = "https://zeba.xyz";
+const VENDOR_URL: &str = "https://zeba-software.de";
 const SIDEBAR_WIDTH: f32 = 208.0;
 const TOPBAR_HEIGHT: f32 = 52.0;
 const CONTENT_WIDTH: f32 = 920.0;
@@ -100,6 +100,8 @@ enum Outcome {
     Restore(RestoreSummary),
     /// Gefundene Sicherungen, jeweils mit der Kennung des Nextcloud-Ziels
     Found(Vec<FoundBackup>),
+    /// Der Installer der neuen Version liegt geprüft bereit
+    UpdateReady(PathBuf),
     /// Inhalt der geöffneten Sicherung als Baum, für die Auswahl einzelner Dateien
     Listed(Tree),
     /// Ergebnis von "Ziel prüfen"
@@ -531,8 +533,14 @@ impl App {
             if let Ok(version) = std::env::var("ZEBACK_UPDATE") {
                 // So tun, als läge diese Version bereit (für Bildschirmfotos des Hinweises).
                 app.update = Some(Release {
+                    installer: Some(crate::update::Installer {
+                        name: format!("ZEBack-{version}-x64.msi"),
+                        url: crate::update::RELEASES_URL.to_string(),
+                        size: 6_200_000,
+                        sha256: None,
+                    }),
                     version,
-                    url: crate::update::DOWNLOAD_URL.to_string(),
+                    url: crate::update::RELEASES_URL.to_string(),
                     notes: "Schnellere Sicherungen und kleinere Korrekturen.".to_string(),
                 });
             }
@@ -812,8 +820,8 @@ impl App {
                         self.set_result(
                             Level::Ok,
                             tr!(
-                                "Version {} ist verfügbar\nDu verwendest {}. Der Hinweis unten links führt zur Download-Seite.",
-                                "Version {} is available\nYou are using {}. The note at the bottom left opens the download page.",
+                                "Version {} ist verfügbar\nDu verwendest {}. In der Karte „Updates“ kannst du sie herunterladen und installieren.",
+                                "Version {} is available\nYou are using {}. You can download and install it in the “Updates” card.",
                                 release.version,
                                 env!("CARGO_PKG_VERSION")
                             ),
@@ -1018,6 +1026,25 @@ impl App {
                 self.found_backups = (!files.is_empty()).then_some(files);
                 (level, text)
             }
+            Outcome::UpdateReady(installer) => match crate::update::install(&installer) {
+                Ok(()) => {
+                    // Das Programm muss weg sein, damit der Installer seine Datei ersetzen kann.
+                    self.persist();
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    (
+                        Level::Ok,
+                        t!(
+                            "Update wird installiert\nZEBack schließt sich jetzt. Nach der Installation startet die neue Version von selbst.",
+                            "Installing update\nZEBack is closing now. The new version starts by itself after the installation."
+                        )
+                        .to_string(),
+                    )
+                }
+                Err(e) => (
+                    Level::Error,
+                    tr!("Update nicht gestartet\n{e:#}", "Update not started\n{e:#}"),
+                ),
+            },
             Outcome::Listed(tree) => {
                 self.tree = Some(Arc::new(tree));
                 self.browse_dir = Some(String::new());
@@ -2029,12 +2056,13 @@ impl App {
             let link = ui
                 .interact(hint_rect.expand(4.0), egui::Id::unique("update_link"), Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(t!("Download-Seite öffnen", "Open the download page"));
+                .on_hover_text(t!("Zum Update", "Go to the update"));
             let hover = ui.ctx().animate_bool_with_time(link.id.with("hover"), link.hovered(), 0.1);
             painter.galley(hint_rect.min, hint, ACCENT);
             painter.hline(hint_rect.x_range(), hint_rect.bottom() + 1.0, Stroke::new(1.0, ACCENT.gamma_multiply(hover)));
             if link.clicked() {
-                self.open_download_page(&release);
+                // Die Karte "Updates" zeigt die neue Version und den Knopf zum Installieren.
+                self.switch_tab(Tab::Reports);
             }
         }
         let version = painter.layout_no_wrap(concat!("v", env!("CARGO_PKG_VERSION")).to_owned(), theme::bold(11.0), TEXT_MUTED);
@@ -4161,7 +4189,7 @@ impl App {
 
     /// Update-Hinweis: Einstellung, Abfrage von Hand und – falls vorhanden – die neue Version.
     fn card_updates(&mut self, ui: &mut Ui) {
-        let (mut check, mut open) = (false, false);
+        let (mut check, mut open, mut install) = (false, false, false);
         let before = self.cfg.check_updates;
         let busy = self.update_rx.is_some();
         widgets::card(ui, |ui| {
@@ -4177,23 +4205,48 @@ impl App {
                 &mut self.cfg.check_updates,
                 t!("Beim Start nach Updates suchen", "Check for updates at startup"),
                 t!(
-                    "Fragt bei zeba.xyz nach der neuesten Versionsnummer. Heruntergeladen oder installiert wird dabei nichts.",
-                    "Asks zeba.xyz for the latest version number. Nothing is downloaded or installed."
+                    "Fragt bei GitHub nach der neuesten Veröffentlichung. Heruntergeladen und installiert wird erst, wenn du es anstößt.",
+                    "Asks GitHub for the latest release. Nothing is downloaded or installed until you start it."
                 ),
             );
+            let installable = self.update.as_ref().is_some_and(|release| release.installer.is_some());
             if let Some(release) = &self.update {
                 ui.add_space(8.0);
                 widgets::divider(ui);
                 ui.add_space(6.0);
                 widgets::kv_row(ui, t!("Neue Version", "New version"), &release.version);
+                if let Some(installer) = &release.installer {
+                    widgets::kv_row(ui, t!("Installer", "Installer"), &format!("{} · {}", installer.name, fmt_bytes(installer.size)));
+                }
                 if !release.notes.is_empty() {
                     ui.add(egui::Label::new(RichText::new(&release.notes).font(theme::regular(12.0)).color(TEXT_MUTED)).wrap());
                 }
+                widgets::text(
+                    ui,
+                    if installable {
+                        t!(
+                            "Der Installer wird von GitHub geladen und geprüft. Danach schließt sich ZEBack, Windows fragt nach Adminrechten, und die neue Version startet von selbst.",
+                            "The installer is downloaded from GitHub and checked. ZEBack then closes, Windows asks for administrator rights, and the new version starts by itself."
+                        )
+                    } else {
+                        t!(
+                            "Diese Veröffentlichung enthält keinen Installer für diesen PC. Du kannst sie auf GitHub ansehen.",
+                            "This release contains no installer for this PC. You can look at it on GitHub."
+                        )
+                    },
+                    theme::regular(12.0),
+                    TEXT_MUTED,
+                );
             }
             ui.add_space(10.0);
             ui.horizontal_wrapped(|ui| {
+                if installable {
+                    install = widgets::button(ui, t!("Herunterladen und installieren", "Download and install"), Kind::Primary, Some(Icon::Downloads))
+                        .clicked();
+                }
                 if self.update.is_some() {
-                    open = widgets::button(ui, t!("Download-Seite öffnen", "Open download page"), Kind::Primary, Some(Icon::Globe)).clicked();
+                    let kind = if installable { Kind::Secondary } else { Kind::Primary };
+                    open = widgets::button(ui, t!("Auf GitHub ansehen", "View on GitHub"), kind, Some(Icon::Globe)).clicked();
                 }
                 // Direkt in der umbrechenden Zeile (ein verschachtelter Bereich würde nicht umbrechen);
                 // während einer laufenden Abfrage zählt der Klick nicht.
@@ -4209,6 +4262,11 @@ impl App {
         }
         if open && let Some(release) = self.update.clone() {
             self.open_download_page(&release);
+        }
+        if install && let Some(release) = self.update.clone() {
+            self.start(t!("Update wird heruntergeladen", "Downloading update"), move |rep| {
+                crate::update::download(&release, rep).map(Outcome::UpdateReady)
+            });
         }
     }
 
