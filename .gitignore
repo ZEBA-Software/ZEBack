@@ -1,0 +1,18 @@
+# Build-Ausgaben von Cargo
+/target
+
+# Fertige Programme und Installer (gehören in ein Release, nicht ins Repository)
+/dist
+
+# WiX Toolset 3.14 (Binärpaket eines Dritten, wird für den MSI-Bau lokal abgelegt)
+/tools
+
+# Wird von build.rs bei jedem Bau aus src/logo.rs erzeugt
+/assets/Packup.ico
+
+# Editoren und Windows
+/.vscode
+/.idea
+*.swp
+Thumbs.db
+desktop.ini

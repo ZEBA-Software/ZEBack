@@ -1,0 +1,4 @@
+# C-Laufzeit statisch einbinden: die EXE läuft dann ohne "Visual C++ Redistributable"
+# und kann direkt vom USB-Stick gestartet werden.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  MSI-Installer für Packup (WiX Toolset 3.14).
+  Gebaut wird mit installer\build-msi.ps1; das Skript übergibt Version, Hersteller und EXE-Pfad.
+  Die Architektur (x64 / arm64) kommt über "candle -arch".
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- UpgradeCode NIE ändern: daran erkennt Windows bei Updates die Vorgängerversion. -->
+  <Product Id="*"
+           Name="Packup"
+           Language="1031"
+           Codepage="1252"
+           Version="$(var.Version)"
+           Manufacturer="$(var.Manufacturer)"
+           UpgradeCode="22871FAF-0139-426F-B33E-BE7CB48FF4A0">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="Packup $(var.Version) ($(sys.BUILDARCH))"
+             Comments="Backup und Wiederherstellung: Benutzerprofile, Laufwerke, Systemabbilder" />
+
+    <!-- Neuere Version ersetzt die alte automatisch; ein Downgrade wird abgelehnt. -->
+    <MajorUpgrade DowngradeErrorMessage="Es ist bereits eine neuere Version von Packup installiert." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Packup" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <Component Id="MainExecutable" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="PackupExe" Name="Packup.exe" Source="$(var.ExePath)" KeyPath="yes" />
+    </Component>
+
+    <!--
+      Startmenü-Eintrag für alle Benutzer. Windows Installer verlangt für Verknüpfungen eine
+      eigene Komponente mit einem Registry-Wert unter HKCU als Schlüsselpfad (ICE43/ICE57).
+    -->
+    <Component Id="StartMenuEntry" Directory="ProgramMenuFolder" Guid="*">
+      <Shortcut Id="StartMenuShortcut"
+                Name="Packup"
+                Description="Profile, Laufwerke und das System sichern und wiederherstellen"
+                Target="[INSTALLFOLDER]Packup.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU"
+                     Key="Software\Packup"
+                     Name="StartMenuShortcut"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="Packup" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="StartMenuEntry" />
+    </Feature>
+
+    <!-- Symbol in der Liste der installierten Apps -->
+    <Icon Id="Packup.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="Packup.ico" />
+
+    <!-- Unter "Apps" nur Deinstallieren anbieten (kein Ändern/Reparieren-Dialog). -->
+    <Property Id="ARPURLINFOABOUT" Value="https://zeba.xyz" />
+    <Property Id="ARPHELPLINK" Value="https://zeba.xyz" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Property Id="ARPCOMMENTS" Value="Backup und Wiederherstellung: Benutzerprofile, Laufwerke, Systemabbilder" />
+  </Product>
+</Wix>
