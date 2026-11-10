@@ -1,0 +1,101 @@
+# Baut ZEBack fuer x64 und ARM64, erzeugt die MSI-Installer und haengt alles an ein Release.
+# Ausgeloest wird der Lauf durch eine Versionsmarke, z. B.:  git tag v0.16.0 && git push origin v0.16.0
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Der Lauf darf Releases anlegen, sonst nichts.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Quelltext holen
+        uses: actions/checkout@v4
+
+      - name: Marke und Version vergleichen
+        shell: pwsh
+        run: |
+          $match = Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+          if (-not $match) { throw 'Versionsnummer in Cargo.toml nicht gefunden.' }
+          $version = $match.Matches[0].Groups[1].Value
+          if ($env:TAG -ne "v$version") {
+            throw "Die Marke $env:TAG passt nicht zur Version $version in Cargo.toml."
+          }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Rust einrichten
+        shell: pwsh
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc
+
+      # Einige Tests haengen von der Umgebung ab (Dienste, Laufwerke). Ihr Ergebnis ist im
+      # Protokoll zu sehen, haelt die Veroeffentlichung aber nicht auf.
+      - name: Tests (zur Information)
+        shell: pwsh
+        continue-on-error: true
+        run: cargo test
+
+      - name: WiX Toolset bereitstellen
+        shell: pwsh
+        run: |
+          $bin = if ($env:WIX) { Join-Path $env:WIX 'bin' } else { '' }
+          if (-not $bin -or -not (Test-Path (Join-Path $bin 'candle.exe'))) {
+            # Nicht vorinstalliert: das Binaerpaket der Version 3.14 vom Hersteller holen.
+            $bin = Join-Path $env:RUNNER_TEMP 'wix314'
+            $zip = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
+            Invoke-WebRequest -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath $bin -Force
+          }
+          if (-not (Test-Path (Join-Path $bin 'candle.exe'))) { throw "WiX Toolset nicht gefunden: $bin" }
+          "WIX_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Programme und Installer bauen
+        shell: pwsh
+        run: ./installer/build-msi.ps1 -WixDir $env:WIX_BIN
+
+      - name: Pruefsummen schreiben
+        shell: pwsh
+        run: |
+          $files = @(
+            "dist/ZEBack-$env:VERSION-x64.msi",
+            "dist/ZEBack-$env:VERSION-arm64.msi",
+            'dist/ZEBack-x64.exe',
+            'dist/ZEBack-arm64.exe'
+          )
+          foreach ($file in $files) { if (-not (Test-Path $file)) { throw "Datei fehlt: $file" } }
+          $files | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash -Path $_ -Algorithm SHA256).Hash.ToLower(), (Split-Path $_ -Leaf)
+          } | Out-File -FilePath dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Release anlegen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = @(
+            "dist/ZEBack-$env:VERSION-x64.msi",
+            "dist/ZEBack-$env:VERSION-arm64.msi",
+            'dist/ZEBack-x64.exe',
+            'dist/ZEBack-arm64.exe',
+            'dist/SHA256SUMS.txt'
+          )
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # Das Release gibt es schon (von Hand angelegt): nur die Dateien ersetzen.
+            gh release upload $env:TAG @files --clobber
+          } else {
+            gh release create $env:TAG @files --title "ZEBack $env:VERSION" --generate-notes --verify-tag
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Das Release konnte nicht angelegt werden.' }

@@ -2,17 +2,22 @@
 #
 #   .\installer\build-msi.ps1              # EXE neu bauen + MSI erzeugen
 #   .\installer\build-msi.ps1 -SkipCargo   # nur MSI aus den vorhandenen EXE-Dateien
+#   .\installer\build-msi.ps1 -WixDir C:\WiX\bin   # WiX an anderer Stelle (z. B. bei GitHub Actions)
 #
-# Voraussetzung: WiX Toolset 3.14 (Binaerpaket) in tools\wix314.
+# Voraussetzung: WiX Toolset 3.14 (Binaerpaket) in tools\wix314 oder im Ordner aus -WixDir.
 # Hinweis: Diese Datei bewusst ohne Umlaute halten (Windows PowerShell 5.1 liest sie sonst falsch).
 
-param([switch]$SkipCargo)
+param(
+    [switch]$SkipCargo,
+    # Ordner mit candle.exe und light.exe; ohne Angabe tools\wix314 im Projekt.
+    [string]$WixDir
+)
 
 # Herstellername, wie er unter "Apps" in Windows erscheint.
 $Manufacturer = 'ZEBA Software UG'
 
 $root = Split-Path -Parent $PSScriptRoot
-$wix = Join-Path $root 'tools\wix314'
+$wix = if ($WixDir) { $WixDir } else { Join-Path $root 'tools\wix314' }
 $wxs = Join-Path $PSScriptRoot 'ZEBack.wxs'
 $icon = Join-Path $root 'assets\ZEBack.ico'
 $dist = Join-Path $root 'dist'

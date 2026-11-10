@@ -80,13 +80,25 @@ bietet an, sie herunterzuladen und zu installieren. Damit das funktioniert, brau
 Version ein Release:
 
 1. Versionsnummer in `Cargo.toml` erhöhen, committen und hochladen.
-2. Installer bauen: `powershell -File .\installer\build-msi.ps1`
-3. Auf GitHub ein Release mit der Marke `v<Version>` anlegen (z. B. `v0.16.0`) und die beiden
-   Dateien `ZEBack-<Version>-x64.msi` und `ZEBack-<Version>-arm64.msi` aus `dist\` anhängen.
-   Die Dateinamen müssen genau so bleiben – daran erkennt ZEBack den passenden Installer.
+2. Eine Marke mit derselben Nummer setzen und hochladen:
 
-Der Text des Releases erscheint im Programm als Beschreibung der Neuerungen. Heruntergeladene
-Installer werden gegen die Prüfsumme geprüft, die GitHub zu jeder Datei angibt.
+   ```powershell
+   git tag v0.16.0
+   git push origin v0.16.0
+   ```
+
+Den Rest erledigt GitHub (`.github/workflows/release.yml`): Es baut beide Architekturen, erzeugt
+die Installer und legt das Release an – mit `ZEBack-<Version>-x64.msi`,
+`ZEBack-<Version>-arm64.msi`, den beiden EXE-Dateien und einer Liste der Prüfsummen. Passt die
+Marke nicht zur Version in `Cargo.toml`, bricht der Lauf ab.
+
+Von Hand geht es auch: Installer mit `installer\build-msi.ps1` bauen und auf GitHub ein Release
+mit der Marke `v<Version>` anlegen. Die Namen der MSI-Dateien müssen genau so bleiben – daran
+erkennt ZEBack den passenden Installer.
+
+Der Text des Releases erscheint im Programm als Beschreibung der Neuerungen; er lässt sich auf
+GitHub nachträglich ändern. Heruntergeladene Installer werden gegen die Prüfsumme geprüft, die
+GitHub zu jeder Datei angibt.
 
 ## Aufbau
 
