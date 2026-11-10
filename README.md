@@ -88,6 +88,18 @@ nur die Installer aus den vorhandenen EXE-Dateien erzeugt. Die Versionsnummer ko
 | `src/theme.rs`, `src/widgets.rs`, `src/logo.rs` | Aussehen, Bedienelemente, Logo |
 | `installer/` | WiX-Quelle und Bauskript für die MSI |
 
+## Lizenz
+
+ZEBack ist Open Source unter der [Apache-Lizenz 2.0](LICENSE).
+
+Du darfst das Programm nutzen, verändern und weitergeben, auch in eigenen Projekten. Dabei gilt:
+
+- **Der Hinweis auf ZEBA Software UG bleibt erhalten.** Wer ZEBack oder eine veränderte Fassung
+  weitergibt, muss die Datei [NOTICE](NOTICE) und die Urheberhinweise mitliefern und Änderungen
+  kenntlich machen.
+- **Die Namen gehören nicht zur Lizenz.** „ZEBack“ und „ZEBA Software“ dürfen nicht als Name einer
+  veränderten Fassung verwendet werden – nur, um auf die Herkunft hinzuweisen.
+
 ## Schrift
 
 Die Oberfläche verwendet [JetBrains Mono](https://www.jetbrains.com/lp/mono/) unter der
