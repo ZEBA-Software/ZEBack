@@ -1,11 +1,19 @@
 # Baut ZEBack fuer x64 und ARM64, erzeugt die MSI-Installer und haengt alles an ein Release.
 # Ausgeloest wird der Lauf durch eine Versionsmarke, z. B.:  git tag v0.16.0 && git push origin v0.16.0
+# Er laesst sich auch von Hand starten (Actions > Release > Run workflow), dann mit der Marke,
+# die veroeffentlicht werden soll; sie muss im Repository schon vorhanden sein.
 name: Release
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Vorhandene Versionsmarke, z. B. v0.16.0"
+        required: true
+        type: string
 
 # Der Lauf darf Releases anlegen, sonst nichts.
 permissions:
@@ -16,10 +24,13 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 60
     env:
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Quelltext holen
         uses: actions/checkout@v4
+        with:
+          # Gebaut wird genau der Stand der Marke, auch beim Start von Hand.
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Marke und Version vergleichen
         shell: pwsh
