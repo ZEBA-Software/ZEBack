@@ -601,7 +601,8 @@ pub fn text_field(
 
 /// Eintrag in der Seitenleiste. Die Markierung des aktiven Eintrags zeichnet der Aufrufer
 /// (sie gleitet zwischen den Einträgen).
-pub fn nav_item(ui: &mut Ui, selected: bool, icon: Icon, label: &str, badge: Option<usize>) -> Response {
+/// `compact`: schmale Leiste – nur das Symbol, die Beschriftung erscheint beim Überfahren.
+pub fn nav_item(ui: &mut Ui, selected: bool, icon: Icon, label: &str, badge: Option<usize>, compact: bool) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
     let ctx = ui.ctx();
     let hover = ctx.animate_bool_with_time(response.id.with("hover"), response.hovered() && !selected, 0.1);
@@ -617,7 +618,8 @@ pub fn nav_item(ui: &mut Ui, selected: bool, icon: Icon, label: &str, badge: Opt
             StrokeKind::Inside,
         );
         // Symbol in einem Kästchen; beim aktiven Eintrag gefüllt wie der aktuelle Schritt im Ablauf.
-        let tile = Rect::from_center_size(pos2(rect.left() + 21.0, rect.center().y), Vec2::splat(24.0));
+        let tile_x = if compact { rect.center().x } else { rect.left() + 21.0 };
+        let tile = Rect::from_center_size(pos2(tile_x, rect.center().y), Vec2::splat(24.0));
         painter.rect(
             tile,
             CornerRadius::ZERO,
@@ -627,24 +629,38 @@ pub fn nav_item(ui: &mut Ui, selected: bool, icon: Icon, label: &str, badge: Opt
         );
         let color = mix(mix(TEXT_MUTED, TEXT, hover), TEXT_BRIGHT, on);
         paint_icon(painter, tile.center(), icon, 13.0, mix(color, ON_ACCENT, on));
-        let font = if selected { theme::bold(13.5) } else { theme::regular(13.5) };
-        let galley = painter.layout_no_wrap(label.to_owned(), font, color);
-        painter.galley(pos2(rect.left() + 43.0, rect.center().y - galley.size().y / 2.0), galley, color);
+        if !compact {
+            let font = if selected { theme::bold(13.5) } else { theme::regular(13.5) };
+            let galley = painter.layout_no_wrap(label.to_owned(), font, color);
+            painter.galley(pos2(rect.left() + 43.0, rect.center().y - galley.size().y / 2.0), galley, color);
+        }
 
         if let Some(count) = badge.filter(|c| *c > 0) {
-            let label = if count > 99 { "99+".to_owned() } else { count.to_string() };
-            let galley = painter.layout_no_wrap(label, theme::bold(11.0), ON_ACCENT);
-            let width = (galley.size().x + 10.0).max(18.0);
-            let tag = Rect::from_center_size(pos2(rect.right() - 8.0 - width / 2.0, rect.center().y), vec2(width, 18.0));
-            painter.rect_filled(tag, CornerRadius::ZERO, YELLOW);
-            painter.galley(tag.center() - galley.size() / 2.0, galley, ON_ACCENT);
+            if compact {
+                // Kein Platz für die Zahl: ein Punkt an der Ecke des Symbols.
+                painter.rect_filled(Rect::from_center_size(tile.right_top(), Vec2::splat(8.0)), CornerRadius::ZERO, YELLOW);
+            } else {
+                let label = if count > 99 { "99+".to_owned() } else { count.to_string() };
+                let galley = painter.layout_no_wrap(label, theme::bold(11.0), ON_ACCENT);
+                let width = (galley.size().x + 10.0).max(18.0);
+                let tag = Rect::from_center_size(pos2(rect.right() - 8.0 - width / 2.0, rect.center().y), vec2(width, 18.0));
+                painter.rect_filled(tag, CornerRadius::ZERO, YELLOW);
+                painter.galley(tag.center() - galley.size() / 2.0, galley, ON_ACCENT);
+            }
         }
     }
-    response.on_hover_cursor(CursorIcon::PointingHand)
+    let response = response.on_hover_cursor(CursorIcon::PointingHand);
+    if compact { response.on_hover_text(label) } else { response }
 }
 
 /// Überschrift einer Gruppe in der Seitenleiste: kleine Versalien mit Linie bis zum Rand.
-pub fn nav_group(ui: &mut Ui, label: &str) {
+/// `compact`: schmale Leiste – nur die Linie.
+pub fn nav_group(ui: &mut Ui, label: &str, compact: bool) {
+    if compact {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
+        ui.painter().hline(rect.shrink2(vec2(8.0, 0.0)).x_range(), rect.center().y, Stroke::new(1.0, BORDER));
+        return;
+    }
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
     let painter = ui.painter();
     let galley = painter.layout_no_wrap(label.to_owned(), theme::bold(10.5), TEXT_FAINT);
@@ -658,14 +674,30 @@ pub fn nav_group(ui: &mut Ui, label: &str) {
 pub fn stepper(ui: &mut Ui, salt: &str, labels: &[&str], current: usize) -> Option<usize> {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
     let id = ui.make_persistent_id(salt);
-    let cell = rect.width() / labels.len().max(1) as f32;
+    let count = labels.len().max(1) as f32;
+    // Wird es eng, behält nur der aktuelle Schritt seine Beschriftung; die anderen zeigen ihre Nummer.
+    const SHORT_CELL: f32 = 46.0;
+    let compact = rect.width() / count < 136.0;
+    let width_of = |index: usize| {
+        if !compact {
+            rect.width() / count
+        } else if index == current.min(labels.len().saturating_sub(1)) {
+            (rect.width() - SHORT_CELL * (count - 1.0)).max(SHORT_CELL)
+        } else {
+            SHORT_CELL
+        }
+    };
     // Die farbige Verbindungslinie wächst animiert bis zum aktuellen Schritt.
     let progress = ui.ctx().animate_value_with_time(id.with("progress"), current as f32, 0.28);
     let painter = ui.painter().clone();
     let mut clicked = None;
+    let mut left = rect.left();
 
     for (index, label) in labels.iter().enumerate() {
-        let cell_rect = Rect::from_min_size(pos2(rect.left() + cell * index as f32, rect.top()), vec2(cell, rect.height()));
+        let cell = width_of(index);
+        let cell_rect = Rect::from_min_size(pos2(left, rect.top()), vec2(cell, rect.height()));
+        left += cell;
+        let label = if compact && index != current { "" } else { *label };
         let done = index < current;
         let active = ui.ctx().animate_bool_with_time(id.with(("active", index)), index == current, 0.18);
         let reached = ui.ctx().animate_bool_with_time(id.with(("done", index)), done, 0.18);
@@ -699,13 +731,16 @@ pub fn stepper(ui: &mut Ui, salt: &str, labels: &[&str], current: usize) -> Opti
 
         let color = mix(mix(mix(TEXT_FAINT, TEXT, reached), TEXT_BRIGHT, hover), TEXT_BRIGHT, active);
         let font = if index == current { theme::bold(14.0) } else { theme::regular(14.0) };
-        let galley = elided(ui, label, font, color, cell - 60.0);
+        let galley = elided(ui, label, font, color, cell - 48.0);
         let label_width = galley.size().x;
         painter.galley(pos2(chip.right() + 10.0, cell_rect.center().y - galley.size().y / 2.0), galley, color);
 
         if index + 1 < labels.len() {
-            let from = chip.right() + 10.0 + label_width + 12.0;
-            let to = cell_rect.right() - 12.0;
+            let (from, to) = if label.is_empty() {
+                (chip.right() + 6.0, cell_rect.right() - 6.0)
+            } else {
+                (chip.right() + 10.0 + label_width + 12.0, cell_rect.right() - 12.0)
+            };
             if to > from {
                 let y = cell_rect.center().y;
                 painter.hline(from..=to, y, Stroke::new(1.0, BORDER));

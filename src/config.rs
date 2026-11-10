@@ -40,20 +40,20 @@ impl Compression {
     pub fn description(self) -> &'static str {
         match self {
             Compression::None => t!(
-                "Nur verpacken: am schnellsten, die ZIP-Datei ist so groß wie die Originale.",
-                "Store only: fastest, the ZIP file is as large as the originals."
+                "Am schnellsten. Die Sicherung wird so groß wie die Daten.",
+                "Fastest. The backup is as large as the data."
             ),
             Compression::Fast => t!(
-                "Schnell fertig, die ZIP-Datei wird etwas größer.",
-                "Finishes quickly, the ZIP file is slightly larger."
+                "Schnell. Die Sicherung wird etwas größer.",
+                "Fast. The backup gets a little larger."
             ),
             Compression::Normal => t!(
-                "Ausgewogen zwischen Tempo und Größe – empfohlen.",
-                "A balance of speed and size – recommended."
+                "Gute Mischung aus Tempo und Größe – empfohlen.",
+                "A good mix of speed and size – recommended."
             ),
             Compression::Max => t!(
-                "Kleinste ZIP-Datei, dauert aber deutlich länger.",
-                "Smallest ZIP file, but takes considerably longer."
+                "Kleinste Sicherung, dauert aber viel länger.",
+                "Smallest backup, but takes much longer."
             ),
         }
     }

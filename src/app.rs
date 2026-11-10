@@ -39,8 +39,13 @@ const MAX_LOG_LINES: usize = 2000;
 /// Website des Herstellers; öffnet sich beim Klick auf den Herstellernamen.
 const VENDOR_URL: &str = "https://zeba-software.de";
 const SIDEBAR_WIDTH: f32 = 208.0;
+/// Schmale Seitenleiste (nur Symbole) für schmale Fenster
+const SIDEBAR_COMPACT: f32 = 56.0;
+/// Unterhalb dieser Fensterbreite wird die Seitenleiste schmal – so bleibt Platz für zwei Spalten.
+const COMPACT_BELOW: f32 = 1000.0;
 const TOPBAR_HEIGHT: f32 = 52.0;
-const CONTENT_WIDTH: f32 = 920.0;
+/// Breiter wird der Inhalt nicht; in größeren Fenstern steht er mittig.
+const CONTENT_WIDTH: f32 = 1040.0;
 /// Ab dieser Breite stehen Karten zweispaltig nebeneinander.
 const TWO_COLUMNS_FROM: f32 = 740.0;
 const GAP: f32 = 16.0;
@@ -284,6 +289,32 @@ fn pick_folder(title: &str) -> Option<PathBuf> {
     rfd::FileDialog::new().set_title(title).pick_folder()
 }
 
+fn sidebar_width(window_width: f32) -> f32 {
+    if window_width < COMPACT_BELOW { SIDEBAR_COMPACT } else { SIDEBAR_WIDTH }
+}
+
+/// Linker Rand und Breite des Inhalts bei `available` Platz: schmale Fenster bekommen schmale
+/// Ränder, in sehr breiten steht der Inhalt mittig.
+fn content_span(available: f32) -> (f32, f32) {
+    let side = if available < 620.0 { 14.0 } else { 26.0 };
+    let width = (available - 2.0 * side).clamp(160.0, CONTENT_WIDTH);
+    (((available - width) / 2.0).max(side), width)
+}
+
+/// Stellt den Inhalt in die Spalte aus `content_span`.
+fn in_content_column<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
+    let (left, width) = content_span(ui.available_width());
+    ui.horizontal_top(|ui| {
+        ui.add_space(left);
+        ui.vertical(|ui| {
+            ui.set_width(width);
+            add_contents(ui)
+        })
+        .inner
+    })
+    .inner
+}
+
 /// Hinweiszeile mit Warnsymbol.
 fn warning_line(ui: &mut Ui, message: &str) {
     ui.horizontal(|ui| {
@@ -309,7 +340,7 @@ fn profile_rows(ui: &mut Ui, profiles: &[Profile], selected: &mut usize) -> bool
         let description = if profile.accessible {
             profile.dir.display().to_string()
         } else {
-            t!("Kein Zugriff – nur mit Administratorrechten lesbar", "No access – readable only with administrator rights").to_string()
+            t!("Gesperrt – nur als Administrator lesbar", "Locked – readable only as administrator").to_string()
         };
         let clicked = ui
             .push_id(("profile", index), |ui| {
@@ -325,8 +356,8 @@ fn profile_rows(ui: &mut Ui, profiles: &[Profile], selected: &mut usize) -> bool
         warning_line(
             ui,
             t!(
-                "Für fremde Profile ZEBack als Administrator starten (Rechtsklick → „Als Administrator ausführen“).",
-                "For other users' profiles, start ZEBack as administrator (right-click → “Run as administrator”)."
+                "Für die Profile anderer Benutzer muss ZEBack als Administrator laufen.",
+                "For other users' profiles, ZEBack must run as administrator."
             ),
         );
     }
@@ -711,12 +742,34 @@ impl App {
         self.started_at = self.now();
         self.result = None;
         self.push_log(false, tr!("[{}] {title} gestartet", "[{}] {title} started", Local::now().format("%H:%M:%S")));
+        // Texte für die Meldung am Symbol im Infobereich, falls das Fenster dorthin versteckt ist.
+        let finished = tr!("{title} fertig", "{title} finished");
+        let failed = tr!("{title} fehlgeschlagen", "{title} failed");
+        let hint = t!("Klicken, um ZEBack zu öffnen.", "Click to open ZEBack.");
         let handle = std::thread::spawn(move || {
             // Solange der Vorgang läuft, geht der PC nicht von selbst in den Ruhezustand.
             let _awake = sysimage::KeepAwake::new();
-            work(&rep)
+            let result = work(&rep);
+            let title = if result.is_ok() { &finished } else { &failed };
+            crate::tray::finished(&crate::tray::Done { title, text: hint, error: result.is_err() });
+            result
         });
         self.running = Some(Running { rx, cancel, handle });
+    }
+
+    /// Versteckt das Fenster in den Infobereich neben der Uhr. Der laufende Vorgang arbeitet
+    /// weiter; ein Klick auf das Symbol holt das Fenster zurück.
+    fn hide_to_tray(&mut self) {
+        let tooltip = t!("ZEBack arbeitet – klicken zum Öffnen", "ZEBack is working – click to open");
+        if !crate::tray::hide("ZEBack", tooltip) {
+            self.set_result(
+                Level::Warn,
+                t!(
+                    "Ausblenden nicht möglich\nDas Fenster bleibt offen. Der Vorgang läuft normal weiter.",
+                    "Could not hide the window\nThe window stays open. The job keeps running as normal."
+                ),
+            );
+        }
     }
 
     fn push_log(&mut self, warn: bool, text: String) {
@@ -810,8 +863,8 @@ impl App {
             Ok(()) => self.set_result(
                 Level::Ok,
                 t!(
-                    "Windows-Assistent geöffnet\nFolge dem Assistenten „Wiederherstellungslaufwerk erstellen“. Der USB-Stick wird dabei gelöscht.",
-                    "Windows wizard opened\nFollow the “Create a recovery drive” wizard. The USB stick will be erased in the process."
+                    "Windows-Assistent geöffnet\nFolge den Schritten im neuen Fenster. Achtung: Der USB-Stick wird dabei gelöscht.",
+                    "Windows wizard opened\nFollow the steps in the new window. Note: the USB stick will be erased."
                 ),
             ),
             Err(e) => self.fail(tr!("Assistent nicht gestartet\n{e:#}", "Wizard not started\n{e:#}")),
@@ -831,8 +884,8 @@ impl App {
                         self.set_result(
                             Level::Ok,
                             tr!(
-                                "Version {} ist verfügbar\nDu verwendest {}. In der Karte „Updates“ kannst du sie herunterladen und installieren.",
-                                "Version {} is available\nYou are using {}. You can download and install it in the “Updates” card.",
+                                "Version {} ist da\nDu hast {}. Unter „Berichte“ kannst du sie bei „Updates“ installieren.",
+                                "Version {} is here\nYou have {}. You can install it under “Reports”, in the “Updates” card.",
                                 release.version,
                                 env!("CARGO_PKG_VERSION")
                             ),
@@ -880,8 +933,8 @@ impl App {
             Err(_) => (
                 Level::Error,
                 t!(
-                    "Interner Fehler\nDer Vorgang wurde unerwartet beendet.",
-                    "Internal error\nThe operation ended unexpectedly."
+                    "Unerwarteter Fehler\nDer Vorgang wurde abgebrochen. Bitte versuche es noch einmal.",
+                    "Unexpected error\nThe job stopped. Please try again."
                 )
                 .to_string(),
             ),
@@ -895,15 +948,15 @@ impl App {
             Outcome::Backup(s) if s.kind == BackupKind::Unchanged => (
                 Level::Ok,
                 t!(
-                    "Keine Änderungen\nSeit der letzten Sicherung hat sich nichts geändert – es wurde keine neue Datei angelegt.",
-                    "No changes\nNothing has changed since the last backup – no new file was created."
+                    "Nichts Neues\nSeit der letzten Sicherung hat sich nichts geändert. Es wurde nichts gespeichert.",
+                    "Nothing new\nNothing has changed since the last backup. Nothing was saved."
                 )
                 .to_string(),
             ),
             Outcome::Backup(s) => {
                 let mut text = tr!(
-                    "{} abgeschlossen\n{} Dateien ({}) als ZIP mit {} in {}.",
-                    "{} complete\n{} files ({}) packed into a {} ZIP in {}.",
+                    "{} fertig\n{} Dateien ({}) gesichert. Die Sicherung ist {} groß und hat {} gedauert.",
+                    "{} finished\n{} files ({}) backed up. The backup is {} in size and took {}.",
                     if s.kind == BackupKind::Partial { t!("Teilsicherung", "Partial backup") } else { t!("Backup", "Backup") },
                     s.files,
                     fmt_bytes(s.bytes),
@@ -915,27 +968,27 @@ impl App {
                 }
                 if s.encrypted {
                     text.push_str(t!(
-                        "\nVerschlüsselt mit AES-256 – ohne das Passwort ist die Sicherung nicht wiederherstellbar.",
-                        "\nEncrypted with AES-256 – without the password the backup cannot be restored."
+                        "\nVerschlüsselt. Ohne das Passwort lässt sich die Sicherung nicht öffnen – heb es gut auf.",
+                        "\nEncrypted. Without the password the backup cannot be opened – keep it safe."
                     ));
                 }
                 if s.verified {
                     text.push_str(t!(
-                        "\nGeprüft: Die ZIP-Datei wurde vollständig gelesen, alle Prüfsummen stimmen.",
-                        "\nVerified: the ZIP file was read completely, all checksums match."
+                        "\nGeprüft: Die Sicherung ist vollständig und lesbar.",
+                        "\nChecked: the backup is complete and readable."
                     ));
                 }
                 if s.skipped_online > 0 {
                     text.push_str(&tr!(
-                        "\n{} Dateien liegen nur online (OneDrive) und wurden ausgelassen.",
-                        "\n{} files are online-only (OneDrive) and were skipped.",
+                        "\n{} Dateien liegen nur in OneDrive und wurden nicht mitgesichert.",
+                        "\n{} files exist only in OneDrive and were not backed up.",
                         s.skipped_online
                     ));
                 }
                 if s.skipped_errors > 0 {
                     text.push_str(&tr!(
-                        "\nAchtung: {} Dateien/Ordner konnten nicht gelesen werden (siehe Protokoll).",
-                        "\nWarning: {} files/folders could not be read (see log).",
+                        "\nAchtung: {} Dateien oder Ordner fehlen in der Sicherung. Welche, steht im Protokoll.",
+                        "\nWarning: {} files or folders are missing from the backup. The log lists them.",
                         s.skipped_errors
                     ));
                     return (Level::Warn, text);
@@ -944,8 +997,8 @@ impl App {
             }
             Outcome::Restore(s) => {
                 let mut text = tr!(
-                    "Wiederherstellung abgeschlossen\n{} Dateien ({}) in {}.",
-                    "Restore complete\n{} files ({}) in {}.",
+                    "Wiederherstellung fertig\n{} Dateien ({}) zurückgeholt. Das hat {} gedauert.",
+                    "Restore finished\n{} files ({}) brought back. That took {}.",
                     s.restored,
                     fmt_bytes(s.bytes),
                     fmt_duration(s.duration)
@@ -959,8 +1012,8 @@ impl App {
                 }
                 if s.failed > 0 {
                     text.push_str(&tr!(
-                        "\nAchtung: {} Einträge konnten nicht wiederhergestellt werden (siehe Protokoll).",
-                        "\nWarning: {} entries could not be restored (see log).",
+                        "\nAchtung: {} Dateien konnten nicht zurückgeholt werden. Welche, steht im Protokoll.",
+                        "\nWarning: {} files could not be brought back. The log lists them.",
                         s.failed
                     ));
                     return (Level::Warn, text);
@@ -984,8 +1037,8 @@ impl App {
                 target.url = login.server;
                 target.user = login.user;
                 let text = tr!(
-                    "Angemeldet als „{}“\nNextcloud hat ein App-Passwort für dieses Gerät erstellt; es ist bei „{}“ eingetragen{}.",
-                    "Signed in as “{}”\nNextcloud has created an app password for this device; it has been entered for “{}”{}.",
+                    "Angemeldet als „{}“\nDie Zugangsdaten sind bei „{}“ eingetragen{}.",
+                    "Signed in as “{}”\nThe sign-in details have been entered for “{}”{}.",
                     target.user,
                     target.name,
                     if target.save_password { t!(" und gemerkt", " and remembered") } else { "" }
@@ -1006,8 +1059,8 @@ impl App {
             Outcome::Image(s) => (
                 Level::Ok,
                 tr!(
-                    "Systemabbild erstellt\nGespeichert im Ordner „WindowsImageBackup“ auf {} in {}.\nZurückgespielt wird es über die Windows-Wiederherstellungsumgebung (siehe „Wiederherstellen“).",
-                    "System image created\nSaved in the “WindowsImageBackup” folder on {} in {}.\nIt is restored through the Windows Recovery Environment (see “Restore”).",
+                    "Systemabbild fertig\nEs liegt im Ordner „WindowsImageBackup“ auf {} und hat {} gedauert.\nWie du es zurückspielst, steht unter „Wiederherstellen“.",
+                    "System image finished\nIt is in the “WindowsImageBackup” folder on {} and took {}.\n“Restore” explains how to put it back.",
                     s.target,
                     fmt_duration(s.duration)
                 ),
@@ -1015,8 +1068,8 @@ impl App {
             Outcome::Verified(report) => (
                 Level::Ok,
                 tr!(
-                    "Sicherung ist in Ordnung\n{} Dateien ({}) gelesen, alle Prüfsummen stimmen.",
-                    "Backup is intact\n{} files ({}) read, all checksums match.",
+                    "Sicherung ist in Ordnung\nAlle {} Dateien ({}) sind lesbar.",
+                    "Backup is fine\nAll {} files ({}) are readable.",
                     report.files,
                     fmt_bytes(report.bytes)
                 ),
@@ -1024,8 +1077,8 @@ impl App {
             Outcome::Found(files) => {
                 let text = match files.len() {
                     0 => t!(
-                        "Keine Sicherungen gefunden\nAuf den erreichbaren Sicherungszielen liegt keine ZIP-Datei. Nicht erreichbare Ziele stehen im Protokoll.",
-                        "No backups found\nThere is no ZIP file on the reachable backup targets. Unreachable targets are listed in the log."
+                        "Keine Sicherung gefunden\nAuf deinen Sicherungszielen liegt keine. Ziele, die gerade nicht erreichbar sind, stehen im Protokoll.",
+                        "No backup found\nThere is none on your backup targets. Targets that cannot be reached right now are listed in the log."
                     )
                     .to_string(),
                     n => tr!(
@@ -1320,8 +1373,8 @@ impl App {
             Ok(()) => self.set_result(
                 Level::Ok,
                 tr!(
-                    "Auftrag gespeichert\nZeitplan eingetragen: {}. Er läuft, während du an Windows angemeldet bist; ein verpasster Termin wird nachgeholt.",
-                    "Job saved\nSchedule registered: {}. It runs while you are signed in to Windows; a missed run is caught up.",
+                    "Auftrag gespeichert\nZeitplan: {}. Der PC muss an sein und du angemeldet. Eine verpasste Sicherung wird nachgeholt.",
+                    "Job saved\nSchedule: {}. The PC must be on and you signed in. A missed backup is caught up.",
                     job.schedule_text()
                 ),
             ),
@@ -1563,8 +1616,8 @@ impl App {
         let selected: Vec<&Target> = self.cfg.targets.iter().filter(|t| t.selected).collect();
         if selected.is_empty() {
             return Err(t!(
-                "Kein Ziel ausgewählt\nBitte mindestens ein Sicherungsziel anhaken oder ein neues anlegen.",
-                "No target selected\nPlease tick at least one backup target or create a new one."
+                "Kein Ziel ausgewählt\nWähle mindestens ein Ziel aus oder lege ein neues an.",
+                "No target selected\nSelect at least one target or add a new one."
             )
             .to_string());
         }
@@ -1578,15 +1631,15 @@ impl App {
         }
         if self.backup_password.chars().count() < 8 {
             return Err(t!(
-                "Passwort zu kurz\nBitte mindestens 8 Zeichen für die Verschlüsselung verwenden.",
-                "Password too short\nPlease use at least 8 characters for the encryption."
+                "Passwort zu kurz\nEs braucht mindestens 8 Zeichen.",
+                "Password too short\nIt needs at least 8 characters."
             )
             .to_string());
         }
         if self.backup_password != self.backup_password_repeat {
             return Err(t!(
-                "Passwörter stimmen nicht überein\nBitte das Passwort zweimal gleich eingeben.",
-                "Passwords do not match\nPlease enter the same password twice."
+                "Passwörter sind verschieden\nGib zweimal dasselbe Passwort ein.",
+                "Passwords differ\nEnter the same password twice."
             )
             .to_string());
         }
@@ -1626,8 +1679,8 @@ impl App {
             sysimage::normalize_target(&target).map_err(|e| tr!("Ziel ungültig\n{e}", "Invalid target\n{e}"))?;
         if self.drives.iter().any(|d| d.system && d.letter().eq_ignore_ascii_case(&target)) {
             return Err(t!(
-                "Ziel ungültig\nDas Abbild kann nicht auf dem Windows-Laufwerk selbst liegen.",
-                "Invalid target\nThe image cannot be stored on the Windows drive itself."
+                "Dieses Ziel geht nicht\nDas Abbild darf nicht auf dem Laufwerk liegen, auf dem Windows ist.",
+                "This target does not work\nThe image must not be on the drive Windows is on."
             )
             .to_string());
         }
@@ -1660,8 +1713,8 @@ impl App {
     fn start_image(&mut self) {
         if !self.elevated {
             return self.fail(t!(
-                "Administratorrechte nötig\nEin Systemabbild kann nur mit Administratorrechten erstellt werden. Bitte „Als Administrator neu starten“ wählen.",
-                "Administrator rights required\nA system image can only be created with administrator rights. Please choose “Restart as administrator”."
+                "Administratorrechte nötig\nKlicke auf „Als Administrator neu starten“ – dann klappt das Systemabbild.",
+                "Administrator rights needed\nClick “Restart as administrator” – then the system image will work."
             ));
         }
         let (target, login) = match self.check_image_target() {
@@ -1738,8 +1791,8 @@ impl App {
             .as_ref()
             .ok_or_else(|| {
                 t!(
-                    "Noch keine Sicherung geöffnet\nBitte eine ZIP-Datei öffnen oder aus Nextcloud laden.",
-                    "No backup opened yet\nPlease open a ZIP file or load one from Nextcloud."
+                    "Noch keine Sicherung geöffnet\nÖffne zuerst eine Sicherung.",
+                    "No backup opened yet\nOpen a backup first."
                 )
                 .to_string()
             })
@@ -1767,8 +1820,8 @@ impl App {
                 Ok(())
             }
             Ok(false) => Err(t!(
-                "Falsches Passwort\nMit diesem Passwort lässt sich die Sicherung nicht entschlüsseln.",
-                "Wrong password\nThe backup cannot be decrypted with this password."
+                "Falsches Passwort\nDamit lässt sich die Sicherung nicht öffnen.",
+                "Wrong password\nThe backup cannot be opened with it."
             )
             .to_string()),
             Err(e) => Err(tr!("Sicherung nicht lesbar\n{e:#}", "Backup not readable\n{e:#}")),
@@ -1784,8 +1837,8 @@ impl App {
         let info = self.check_restore_archive()?;
         if self.picked.is_empty() && info.manifest.is_some() && !self.root_checked.iter().any(|c| *c) {
             return Err(t!(
-                "Nichts ausgewählt\nBitte mindestens einen Ordner aus der Sicherung anhaken.",
-                "Nothing selected\nPlease tick at least one folder from the backup."
+                "Nichts ausgewählt\nWähle mindestens einen Ordner aus.",
+                "Nothing selected\nSelect at least one folder."
             )
             .to_string());
         }
@@ -1797,8 +1850,8 @@ impl App {
         if self.restore_mode == RestoreMode::Folder || !info.fits_profile() {
             if self.restore_dir.trim().is_empty() {
                 return Err(t!(
-                    "Zielordner fehlt\nBitte einen Ordner für die Wiederherstellung auswählen.",
-                    "Target folder missing\nPlease choose a folder for the restore."
+                    "Zielordner fehlt\nWähle aus, wohin die Dateien sollen.",
+                    "Target folder missing\nChoose where the files should go."
                 )
                 .to_string());
             }
@@ -1967,13 +2020,17 @@ impl App {
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE,
         );
-        painter.text(
-            pos2(logo_rect.right() + 10.0, rect.center().y),
-            Align2::LEFT_CENTER,
-            "ZEBack",
-            theme::bold(15.0),
-            TEXT_BRIGHT,
-        );
+        // Über der schmalen Seitenleiste steht nur das Logo.
+        let sidebar = sidebar_width(rect.width());
+        if sidebar > SIDEBAR_COMPACT {
+            painter.text(
+                pos2(logo_rect.right() + 10.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                "ZEBack",
+                theme::bold(15.0),
+                TEXT_BRIGHT,
+            );
+        }
 
         // Aktuelle Seite
         let (icon, title, subtitle) = match self.tab {
@@ -1981,8 +2038,8 @@ impl App {
                 Icon::Backup,
                 t!("Sichern", "Back up"),
                 t!(
-                    "Profil, Laufwerk oder ganzes System Schritt für Schritt sichern",
-                    "Back up a profile, a drive or the whole system step by step"
+                    "Dateien, ein Laufwerk oder den ganzen PC sichern",
+                    "Back up files, a drive or the whole PC"
                 ),
             ),
             Tab::Restore => (
@@ -1993,7 +2050,7 @@ impl App {
             Tab::Jobs => (
                 Icon::Sync,
                 t!("Aufträge", "Jobs"),
-                t!("Gespeicherte Sicherungen: mit einem Klick oder nach Zeitplan", "Saved backups: with one click or on a schedule"),
+                t!("Sicherungen, die auf Knopfdruck oder von selbst laufen", "Backups that run at a click or by themselves"),
             ),
             Tab::Reports => (
                 Icon::Mail,
@@ -2004,19 +2061,19 @@ impl App {
                 Icon::Drive,
                 t!("Sicherungsziele", "Backup targets"),
                 t!(
-                    "Wohin gesichert werden kann: Ordner, Netzwerkfreigaben, Nextcloud",
-                    "Where backups can go: folders, network shares, Nextcloud"
+                    "Orte, an denen deine Sicherungen liegen",
+                    "Places where your backups are stored"
                 ),
             ),
             Tab::Log => (Icon::Log, t!("Protokoll", "Log"), t!("Was zuletzt passiert ist", "What happened recently")),
         };
-        let x = rect.left() + SIDEBAR_WIDTH + 24.0;
+        let x = rect.left() + sidebar + content_span(rect.width() - sidebar).0 - 2.0;
         widgets::paint_icon(painter, pos2(x + 8.0, rect.center().y), icon, 15.0, TEXT_MUTED);
         let title = painter.layout_no_wrap(title.to_owned(), theme::regular(14.0), TEXT_BRIGHT);
         let title_width = title.size().x;
         painter.galley(pos2(x + 26.0, rect.center().y - title.size().y / 2.0), title, TEXT_BRIGHT);
 
-        // Angemeldeter Benutzer rechts
+        // Angemeldeter Benutzer rechts; fehlt der Platz, bleibt nur das Zeichen für "läuft/bereit".
         let label = if self.computer_name.is_empty() {
             self.user_name.clone()
         } else {
@@ -2024,9 +2081,11 @@ impl App {
         };
         let label = if self.elevated { format!("{label} · Administrator") } else { label };
         let label = painter.layout_no_wrap(label, theme::regular(13.0), TEXT);
+        let right = rect.right() - 20.0;
+        let with_name = right - label.size().x - 38.0 > x + 26.0 + title_width + 24.0;
         let pill = Rect::from_min_max(
-            pos2(rect.right() - 20.0 - label.size().x - 38.0, rect.center().y - 15.0),
-            pos2(rect.right() - 20.0, rect.center().y + 15.0),
+            pos2(if with_name { right - label.size().x - 38.0 } else { right - 30.0 }, rect.center().y - 15.0),
+            pos2(right, rect.center().y + 15.0),
         );
         painter.rect(pill, CornerRadius::ZERO, SURFACE, Stroke::new(1.0, BORDER), StrokeKind::Inside);
         let dot_color = if busy { YELLOW.gamma_multiply(0.5 + 0.5 * (time * 4.0).sin().abs()) } else { GREEN };
@@ -2035,7 +2094,9 @@ impl App {
             CornerRadius::ZERO,
             dot_color,
         );
-        painter.galley(pos2(pill.left() + 26.0, pill.center().y - label.size().y / 2.0), label, TEXT);
+        if with_name {
+            painter.galley(pos2(pill.left() + 26.0, pill.center().y - label.size().y / 2.0), label, TEXT);
+        }
 
         // Erklärung zur Seite, soweit Platz ist
         let subtitle_left = x + 26.0 + title_width + 14.0;
@@ -2055,8 +2116,132 @@ impl App {
         let rect = ui.max_rect();
         let painter = ui.painter().clone();
         painter.vline(rect.right() - 0.5, rect.y_range(), Stroke::new(1.0, BORDER));
-        // Fußzeile: Version im Kästchen, darunter der Hersteller als Link zu seiner Website.
-        // Gibt es eine neuere Version, steht darüber eine Zeile mit dem Hinweis.
+        // In schmalen Fenstern zeigt die Leiste nur Symbole.
+        let compact = rect.width() < SIDEBAR_COMPACT + 20.0;
+        let footer_top =
+            if compact { self.sidebar_footer_compact(ui, rect, &painter) } else { self.sidebar_footer(ui, rect, &painter) };
+
+        let side = if compact { 7.0 } else { 8.0 };
+        let nav = Rect::from_min_max(
+            pos2(rect.left() + side, rect.top() + 10.0),
+            pos2(rect.right() - side - 1.0, footer_top - 8.0),
+        );
+        let entries = [
+            (Tab::Backup, Icon::Backup, t!("Sichern", "Back up"), Some(t!("SICHERUNG", "BACKUP"))),
+            (Tab::Restore, Icon::Restore, t!("Wiederherstellen", "Restore"), None),
+            (Tab::Jobs, Icon::Sync, t!("Aufträge", "Jobs"), None),
+            (Tab::Targets, Icon::Drive, t!("Sicherungsziele", "Backup targets"), Some(t!("VERWALTUNG", "MANAGEMENT"))),
+            (Tab::Reports, Icon::Mail, t!("Berichte", "Reports"), None),
+            (Tab::Log, Icon::Log, t!("Protokoll", "Log"), None),
+        ];
+        let mut clicked = None;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(nav), |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            let marker = ui.painter().add(Shape::Noop);
+            let mut selected_rect = None;
+            for (tab, icon, label, group) in entries {
+                if let Some(group) = group {
+                    if tab != Tab::Backup {
+                        ui.add_space(if compact { 4.0 } else { 10.0 });
+                    }
+                    // In der schmalen Leiste ist die Gruppe nur eine Trennlinie – oben braucht es keine.
+                    if !compact || tab != Tab::Backup {
+                        widgets::nav_group(ui, group, compact);
+                    }
+                }
+                let badge = (tab == Tab::Log).then_some(self.unseen_warnings);
+                let response = widgets::nav_item(ui, self.tab == tab, icon, label, badge, compact);
+                if response.clicked() {
+                    clicked = Some(tab);
+                }
+                if self.tab == tab {
+                    selected_rect = Some(response.rect);
+                }
+            }
+            // Die Markierung gleitet zum aktiven Eintrag.
+            if let Some(target) = selected_rect {
+                let top = ui.ctx().animate_value_with_time(egui::Id::unique("nav_marker"), target.top(), 0.18);
+                let moved = Rect::from_min_size(pos2(target.left(), top), target.size());
+                ui.painter().set(
+                    marker,
+                    egui::epaint::RectShape::new(
+                        moved,
+                        CornerRadius::ZERO,
+                        ACCENT_BG,
+                        Stroke::new(1.0, mix(BORDER, ACCENT, 0.75)),
+                        StrokeKind::Inside,
+                    ),
+                );
+                // Eckmarken wie bei den Karten, hier in der Akzentfarbe
+                widgets::corner_brackets(&painter, moved, 6.0, ACCENT);
+            }
+        });
+        if let Some(tab) = clicked {
+            self.switch_tab(tab);
+        }
+    }
+
+    /// Schaltfläche des Sprachumschalters; `place` bestimmt aus der Größe, wo sie steht.
+    fn language_button(
+        &mut self,
+        ui: &Ui,
+        painter: &egui::Painter,
+        code: &'static str,
+        language: Language,
+        place: impl FnOnce(Vec2) -> Rect,
+    ) -> Rect {
+        let active = crate::i18n::english() == (language == Language::English);
+        let color = if active { ACCENT } else { TEXT_MUTED };
+        let label = painter.layout_no_wrap(code.to_owned(), theme::bold(11.0), color);
+        let button = place(label.size() + vec2(12.0, 6.0));
+        let response = ui
+            .interact(button, egui::Id::unique(("language", code)), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let (fill, border) = if active { (ACCENT_BG, ACCENT) } else { (SURFACE, BORDER) };
+        painter.rect(button, CornerRadius::ZERO, fill, Stroke::new(1.0, border), StrokeKind::Inside);
+        painter.galley(button.center() - label.size() / 2.0, label, color);
+        if response.clicked() && !active {
+            self.cfg.language = language;
+            crate::i18n::apply(language);
+            self.persist();
+        }
+        button
+    }
+
+    /// Fußzeile der schmalen Seitenleiste: Hinweis auf ein Update und die Sprachwahl, untereinander.
+    /// Rückgabe: wo die Fußzeile beginnt.
+    fn sidebar_footer_compact(&mut self, ui: &Ui, rect: Rect, painter: &egui::Painter) -> f32 {
+        let update_row = if self.update.is_some() { 26.0 } else { 0.0 };
+        let footer_top = rect.bottom() - 66.0 - update_row;
+        painter.hline(rect.left()..=rect.right() - 1.0, footer_top, Stroke::new(1.0, BORDER));
+        let center = rect.center().x - 0.5;
+        let mut top = footer_top + 10.0;
+        if let Some(release) = self.update.clone() {
+            let label = painter.layout_no_wrap(t!("NEU", "NEW").to_owned(), theme::bold(10.5), ACCENT);
+            let tag = Rect::from_center_size(pos2(center, top + 11.0), label.size() + vec2(10.0, 6.0));
+            let link = ui
+                .interact(tag, egui::Id::unique("update_link"), Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(tr!("Update {} verfügbar", "Update {} available", release.version));
+            painter.rect(tag, CornerRadius::ZERO, ACCENT_BG, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+            painter.galley(tag.center() - label.size() / 2.0, label, ACCENT);
+            if link.clicked() {
+                self.switch_tab(Tab::Reports);
+            }
+            top += update_row;
+        }
+        for (code, language) in [("DE", Language::German), ("EN", Language::English)] {
+            let button =
+                self.language_button(ui, painter, code, language, |size| Rect::from_center_size(pos2(center, top + size.y / 2.0), size));
+            top = button.bottom() + 4.0;
+        }
+        footer_top
+    }
+
+    /// Fußzeile der Seitenleiste: Version im Kästchen, daneben die Sprachwahl, darunter der
+    /// Hersteller als Link zu seiner Website. Gibt es eine neuere Version, steht darüber ein Hinweis.
+    /// Rückgabe: wo die Fußzeile beginnt.
+    fn sidebar_footer(&mut self, ui: &Ui, rect: Rect, painter: &egui::Painter) -> f32 {
         let update_row = if self.update.is_some() { 26.0 } else { 0.0 };
         let footer_top = rect.bottom() - 70.0 - update_row;
         painter.hline(rect.left()..=rect.right() - 1.0, footer_top, Stroke::new(1.0, BORDER));
@@ -2099,82 +2284,13 @@ impl App {
 
         // Sprachumschalter rechts neben der Version
         let mut right = rect.right() - 17.0;
-        for (code, language, active) in [
-            ("EN", Language::English, crate::i18n::english()),
-            ("DE", Language::German, !crate::i18n::english()),
-        ] {
-            let color = if active { ACCENT } else { TEXT_MUTED };
-            let label = painter.layout_no_wrap(code.to_owned(), theme::bold(11.0), color);
-            let size = label.size() + vec2(12.0, 6.0);
-            let button = Rect::from_min_size(pos2(right - size.x, tag.top()), size);
+        for (code, language) in [("EN", Language::English), ("DE", Language::German)] {
+            let button = self.language_button(ui, painter, code, language, |size| {
+                Rect::from_min_size(pos2(right - size.x, tag.top()), size)
+            });
             right = button.left() - 4.0;
-            let response = ui
-                .interact(button, egui::Id::unique(("language", code)), Sense::click())
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            let (fill, border) = if active { (ACCENT_BG, ACCENT) } else { (SURFACE, BORDER) };
-            painter.rect(button, CornerRadius::ZERO, fill, Stroke::new(1.0, border), StrokeKind::Inside);
-            painter.galley(button.center() - label.size() / 2.0, label, color);
-            if response.clicked() && !active {
-                self.cfg.language = language;
-                crate::i18n::apply(language);
-                self.persist();
-            }
         }
-
-        let nav = Rect::from_min_max(
-            pos2(rect.left() + 8.0, rect.top() + 10.0),
-            pos2(rect.right() - 9.0, footer_top - 8.0),
-        );
-        let entries = [
-            (Tab::Backup, Icon::Backup, t!("Sichern", "Back up"), Some(t!("SICHERUNG", "BACKUP"))),
-            (Tab::Restore, Icon::Restore, t!("Wiederherstellen", "Restore"), None),
-            (Tab::Jobs, Icon::Sync, t!("Aufträge", "Jobs"), None),
-            (Tab::Targets, Icon::Drive, t!("Sicherungsziele", "Backup targets"), Some(t!("VERWALTUNG", "MANAGEMENT"))),
-            (Tab::Reports, Icon::Mail, t!("Berichte", "Reports"), None),
-            (Tab::Log, Icon::Log, t!("Protokoll", "Log"), None),
-        ];
-        let mut clicked = None;
-        ui.scope_builder(egui::UiBuilder::new().max_rect(nav), |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            let marker = ui.painter().add(Shape::Noop);
-            let mut selected_rect = None;
-            for (tab, icon, label, group) in entries {
-                if let Some(group) = group {
-                    if tab != Tab::Backup {
-                        ui.add_space(10.0);
-                    }
-                    widgets::nav_group(ui, group);
-                }
-                let badge = (tab == Tab::Log).then_some(self.unseen_warnings);
-                let response = widgets::nav_item(ui, self.tab == tab, icon, label, badge);
-                if response.clicked() {
-                    clicked = Some(tab);
-                }
-                if self.tab == tab {
-                    selected_rect = Some(response.rect);
-                }
-            }
-            // Die Markierung gleitet zum aktiven Eintrag.
-            if let Some(target) = selected_rect {
-                let top = ui.ctx().animate_value_with_time(egui::Id::unique("nav_marker"), target.top(), 0.18);
-                let moved = Rect::from_min_size(pos2(target.left(), top), target.size());
-                ui.painter().set(
-                    marker,
-                    egui::epaint::RectShape::new(
-                        moved,
-                        CornerRadius::ZERO,
-                        ACCENT_BG,
-                        Stroke::new(1.0, mix(BORDER, ACCENT, 0.75)),
-                        StrokeKind::Inside,
-                    ),
-                );
-                // Eckmarken wie bei den Karten, hier in der Akzentfarbe
-                widgets::corner_brackets(&painter, moved, 6.0, ACCENT);
-            }
-        });
-        if let Some(tab) = clicked {
-            self.switch_tab(tab);
-        }
+        footer_top
     }
 
     // ------------------------------------------------------------------ Seitenrahmen
@@ -2205,10 +2321,8 @@ impl App {
             .id_salt((self.tab, self.backup_step, self.restore_step))
             .auto_shrink(false)
             .show(ui, |ui| {
-                egui::Frame::new()
-                    .inner_margin(Margin { left: 26, right: 26, top: 22, bottom: 26 })
-                    .show(ui, |ui| {
-                        ui.set_max_width(ui.available_width().min(CONTENT_WIDTH));
+                in_content_column(ui, |ui| {
+                        ui.add_space(22.0);
                         let enabled = self.running.is_none() || self.tab == Tab::Log;
                         ui.add_enabled_ui(enabled, |ui| {
                             // Die Schrittanzeige bleibt stehen; nur der Inhalt darunter bewegt sich.
@@ -2243,7 +2357,8 @@ impl App {
                                 }
                             });
                         });
-                    });
+                        ui.add_space(26.0);
+                });
             });
     }
 
@@ -2284,8 +2399,8 @@ impl App {
                     0,
                     t!("Was soll gesichert werden?", "What do you want to back up?"),
                     t!(
-                        "Ein Benutzerprofil, ein ganzes Laufwerk oder das komplette System.",
-                        "A user profile, a whole drive or the complete system."
+                        "Die Dateien eines Benutzers, ein ganzes Laufwerk oder den kompletten PC.",
+                        "One user's files, a whole drive or the complete PC."
                     ),
                 );
                 self.two_columns(ui, Self::card_backup_mode, Self::card_backup_subject);
@@ -2297,8 +2412,8 @@ impl App {
                     1,
                     t!("Welche Ordner sollen gesichert werden?", "Which folders do you want to back up?"),
                     &tr!(
-                        "Ordner von „{name}“. Rechts stehen Zusatzordner wie Browser und Mail, soweit vorhanden.",
-                        "Folders of “{name}”. On the right are additional folders such as browser and mail, where present."
+                        "Hake an, was von „{name}“ gesichert werden soll.",
+                        "Tick what you want to back up from “{name}”."
                     ),
                 );
                 if self.opt_rows.is_empty() {
@@ -2313,8 +2428,8 @@ impl App {
                     1,
                     t!("Was gehört in die Laufwerkssicherung?", "What goes into the drive backup?"),
                     t!(
-                        "Alle Dateien des Laufwerks als ZIP. Ein startfähiges Windows entsteht daraus nicht.",
-                        "All files on the drive as a ZIP. This does not produce a bootable Windows."
+                        "Alle Dateien des Laufwerks. Windows selbst lässt sich daraus nicht wieder starten.",
+                        "All files on the drive. Windows itself cannot be started from it again."
                     ),
                 );
                 self.card_drive_scope(ui);
@@ -2325,8 +2440,8 @@ impl App {
                     1,
                     t!("Was gehört ins Systemabbild?", "What goes into the system image?"),
                     t!(
-                        "Windows samt Programmen und Einstellungen – so, dass der PC daraus wieder startet.",
-                        "Windows including programs and settings – so that the PC can boot from it again."
+                        "Der ganze PC: Windows, Programme, Einstellungen und Dateien.",
+                        "The whole PC: Windows, programs, settings and files."
                     ),
                 );
                 self.card_image_scope(ui);
@@ -2337,8 +2452,8 @@ impl App {
                     2,
                     t!("Wohin soll das Systemabbild?", "Where should the system image go?"),
                     t!(
-                        "Auf eine externe Festplatte oder eine Netzwerkfreigabe. Nextcloud ist dafür nicht geeignet.",
-                        "To an external hard drive or a network share. Nextcloud is not suitable for this."
+                        "Auf eine externe Festplatte oder eine Netzwerkfreigabe.",
+                        "To an external hard drive or a network share."
                     ),
                 );
                 self.card_image_target(ui);
@@ -2349,8 +2464,8 @@ impl App {
                     2,
                     t!("Wohin soll die Sicherung?", "Where should the backup go?"),
                     t!(
-                        "Hake eines oder mehrere deiner Sicherungsziele an: Ordner, Netzwerkfreigabe, Nextcloud.",
-                        "Tick one or more of your backup targets: folder, network share, Nextcloud."
+                        "Wähle ein Ziel aus – oder mehrere gleichzeitig.",
+                        "Pick a target – or several at once."
                     ),
                 );
                 self.card_target(ui);
@@ -2390,14 +2505,14 @@ impl App {
                     BackupMode::Profile,
                     Icon::User,
                     t!("Benutzerprofil", "User profile"),
-                    t!("Ordner eines Benutzers als ZIP", "A user's folders as a ZIP"),
+                    t!("Dokumente, Bilder, Desktop und mehr", "Documents, pictures, desktop and more"),
                 ),
-                (BackupMode::Drive, Icon::Drive, t!("Ganzes Laufwerk", "Whole drive"), t!("Alle Dateien als ZIP", "All files as a ZIP")),
+                (BackupMode::Drive, Icon::Drive, t!("Ganzes Laufwerk", "Whole drive"), t!("Alle Dateien eines Laufwerks", "All files on a drive")),
                 (
                     BackupMode::Image,
                     Icon::Desktop,
                     t!("Systemabbild", "System image"),
-                    t!("Startfähiges Abbild von Windows", "Bootable image of Windows"),
+                    t!("Der ganze PC samt Windows", "The whole PC including Windows"),
                 ),
             ] {
                 if widgets::option_row(ui, self.backup_mode == mode, Mark::Radio, icon, title, description).clicked() {
@@ -2479,20 +2594,20 @@ impl App {
                     widgets::card_header(ui, Icon::Desktop, t!("Systemabbild", "System image"), "", None);
                     for line in [
                         t!(
-                            "Sichert Windows, Programme, Einstellungen und alle Benutzer in einem Abbild.",
-                            "Backs up Windows, programs, settings and all users in one image."
+                            "Sichert den ganzen PC: Windows, Programme, Einstellungen und alle Benutzer.",
+                            "Backs up the whole PC: Windows, programs, settings and all users."
                         ),
                         t!(
-                            "Erstellt wird es mit der Abbildsicherung, die Windows selbst mitbringt.",
-                            "It is created with the image backup that is built into Windows."
+                            "Dafür nutzt ZEBack die Sicherung, die in Windows eingebaut ist.",
+                            "For this, ZEBack uses the backup that is built into Windows."
                         ),
                         t!(
-                            "Ziel ist eine externe Festplatte (NTFS) oder eine Netzwerkfreigabe.",
-                            "The target is an external hard drive (NTFS) or a network share."
+                            "Du brauchst eine externe Festplatte oder eine Netzwerkfreigabe.",
+                            "You need an external hard drive or a network share."
                         ),
                         t!(
-                            "Zurückgespielt wird es über die Windows-Wiederherstellungsumgebung.",
-                            "It is restored through the Windows Recovery Environment."
+                            "Zurückgespielt wird es über das Reparaturmenü von Windows.",
+                            "It is put back through the Windows repair menu."
                         ),
                     ] {
                         ui.horizontal_top(|ui| {
@@ -2502,7 +2617,7 @@ impl App {
                     }
                     ui.add_space(6.0);
                     let (recovery, bitlocker) = self.facts_texts();
-                    widgets::kv_row(ui, t!("Wiederherstellungsumgebung", "Recovery environment"), recovery);
+                    widgets::kv_row(ui, t!("Reparaturmenü von Windows", "Windows repair menu"), recovery);
                     widgets::kv_row(ui, t!("BitLocker auf dem Windows-Laufwerk", "BitLocker on the Windows drive"), bitlocker);
                     if self.elevated {
                         widgets::kv_row(ui, t!("Administratorrechte", "Administrator rights"), t!("vorhanden", "available"));
@@ -2568,16 +2683,16 @@ impl App {
                 &mut self.cfg.drive_data_only,
                 t!("Nur Daten sichern", "Back up data only"),
                 t!(
-                    "Windows und installierte Programme auslassen. Sie lassen sich aus einer ZIP-Datei nicht startfähig zurückspielen – dafür ist das Systemabbild da.",
-                    "Skip Windows and installed programs. They cannot be restored from a ZIP file in a bootable state – that is what the system image is for."
+                    "Lässt Windows und Programme weg. Die sichert man besser mit dem Systemabbild.",
+                    "Leaves out Windows and programs. Those are better backed up with the system image."
                 ),
             );
             ui.add_space(8.0);
             widgets::text(
                 ui,
                 t!(
-                    "Immer ausgelassen: Auslagerungs- und Ruhezustandsdatei, Papierkorb, Temp-Ordner, Windows-Update-Reste und vorhandene Systemabbilder.",
-                    "Always skipped: page file and hibernation file, recycle bin, temp folders, Windows Update leftovers and existing system images."
+                    "Nie dabei: Papierkorb, Zwischenspeicher und andere Dateien, die Windows von selbst neu anlegt.",
+                    "Never included: recycle bin, caches and other files that Windows recreates by itself."
                 ),
                 theme::regular(12.0),
                 TEXT_MUTED,
@@ -2587,8 +2702,8 @@ impl App {
                 warning_line(
                     ui,
                     t!(
-                        "Ohne Administratorrechte werden die Ordner anderer Benutzer und geschützte Systemdateien übersprungen.",
-                        "Without administrator rights, other users' folders and protected system files are skipped."
+                        "Ohne Administratorrechte fehlen die Ordner anderer Benutzer und geschützte Dateien.",
+                        "Without administrator rights, other users' folders and protected files are left out."
                     ),
                 );
                 admin = widgets::button(
@@ -2619,8 +2734,8 @@ impl App {
             let mut always = true;
             ui.add_enabled_ui(false, |ui| {
                 let subtitle = t!(
-                    "Systemlaufwerk, Start- und Wiederherstellungspartition – immer enthalten",
-                    "System drive, boot and recovery partitions – always included"
+                    "Alles, was der PC zum Starten braucht – immer dabei",
+                    "Everything the PC needs to start – always included"
                 );
                 let title = system.as_ref().map(|d| format!("Windows {}", d.letter())).unwrap_or_else(|| "Windows".into());
                 let size = system.as_ref().map(|d| fmt_bytes(d.used()));
@@ -2631,7 +2746,7 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Weitere fest eingebaute Laufwerke gibt es auf diesem PC nicht.",
+                        "Dieser PC hat keine weiteren eingebauten Laufwerke.",
                         "This PC has no other built-in drives."
                     ),
                     theme::regular(12.0),
@@ -2672,8 +2787,8 @@ impl App {
                 warning_line(
                     ui,
                     t!(
-                        "Es ist kein weiteres Laufwerk angeschlossen. Bitte eine externe Festplatte anstecken oder eine Netzwerkfreigabe anlegen.",
-                        "No other drive is connected. Please plug in an external hard drive or create a network share."
+                        "Kein passendes Laufwerk gefunden. Schließ eine externe Festplatte an oder lege eine Netzwerkfreigabe an.",
+                        "No suitable drive found. Connect an external hard drive or add a network share."
                     ),
                 );
             }
@@ -2683,14 +2798,14 @@ impl App {
                 let included = self.image_include.contains(&letter);
                 let description = if !suitable {
                     tr!(
-                        "{} – nicht geeignet, das Ziel muss mit NTFS formatiert sein",
-                        "{} – not suitable, the target must be formatted with NTFS",
+                        "{} – geht nicht, das Laufwerk braucht das Format NTFS",
+                        "{} – does not work, the drive needs the NTFS format",
                         drive.file_system
                     )
                 } else if included {
                     t!(
-                        "Gehört zum Umfang des Abbilds und kann nicht zugleich Ziel sein",
-                        "Is part of the image scope and cannot be the target at the same time"
+                        "Wird selbst mitgesichert und kann deshalb nicht das Ziel sein",
+                        "Is being backed up itself, so it cannot be the target"
                     )
                     .to_string()
                 } else if drive.free < needed {
@@ -2741,7 +2856,7 @@ impl App {
                     self.image_smb = Some(*id);
                 }
             }
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 refresh = widgets::button(ui, t!("Laufwerke neu einlesen", "Rescan drives"), Kind::Ghost, Some(Icon::Sync)).clicked();
                 manage =
                     widgets::button(ui, t!("Netzwerkfreigabe anlegen", "Add network share"), Kind::Ghost, Some(Icon::Add)).clicked();
@@ -2750,8 +2865,8 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Auf einer Netzwerkfreigabe bewahrt Windows nur das jeweils letzte Abbild auf.",
-                        "On a network share, Windows only keeps the most recent image."
+                        "Auf einer Netzwerkfreigabe behält Windows immer nur das neueste Abbild.",
+                        "On a network share, Windows only ever keeps the newest image."
                     ),
                     theme::regular(12.0),
                     TEXT_MUTED,
@@ -2822,8 +2937,8 @@ impl App {
             widgets::text(
                 ui,
                 t!(
-                    "Das Abbild landet im Ordner „WindowsImageBackup“ auf dem Ziel. Die Sicherung läuft über einen Windows-Dienst und kann je nach Datenmenge lange dauern; der PC bleibt dabei benutzbar und geht nicht in den Ruhezustand.",
-                    "The image ends up in the “WindowsImageBackup” folder on the target. The backup runs through a Windows service and can take a long time depending on the amount of data; the PC stays usable meanwhile and does not go to sleep."
+                    "Das Abbild landet im Ordner „WindowsImageBackup“ auf dem Ziel. Das kann lange dauern. Du kannst den PC währenddessen normal benutzen.",
+                    "The image is stored in the “WindowsImageBackup” folder on the target. This can take a long time. You can keep using the PC meanwhile."
                 ),
                 theme::regular(12.0),
                 TEXT_MUTED,
@@ -2834,8 +2949,8 @@ impl App {
                     warning_line(
                         ui,
                         t!(
-                            "Die Wiederherstellungsumgebung ist auf diesem PC abgeschaltet. Zum Zurückspielen brauchst du dann einen Rettungs-USB-Stick oder einen Windows-Installations-Stick.",
-                            "The recovery environment is disabled on this PC. To restore you will then need a recovery USB stick or a Windows installation USB stick."
+                            "Das Reparaturmenü von Windows ist auf diesem PC abgeschaltet. Zum Zurückspielen brauchst du deshalb einen Rettungs-USB-Stick.",
+                            "The Windows repair menu is turned off on this PC. To put the image back you therefore need a recovery USB stick."
                         ),
                     );
                 }
@@ -2844,8 +2959,8 @@ impl App {
                     warning_line(
                         ui,
                         t!(
-                            "Das Windows-Laufwerk ist mit BitLocker verschlüsselt. Das Abbild liegt unverschlüsselt auf dem Ziel – schütze den Zieldatenträger selbst. Halte den BitLocker-Wiederherstellungsschlüssel bereit; nach dem Zurückspielen muss BitLocker neu eingeschaltet werden.",
-                            "The Windows drive is encrypted with BitLocker. The image is stored unencrypted on the target – protect the target disk yourself. Keep the BitLocker recovery key at hand; after restoring, BitLocker has to be turned on again."
+                            "Dieser PC ist mit BitLocker verschlüsselt, das Abbild aber nicht. Bewahre die Festplatte mit dem Abbild sicher auf. Halte deinen BitLocker-Wiederherstellungsschlüssel bereit und schalte BitLocker nach dem Zurückspielen wieder ein.",
+                            "This PC is encrypted with BitLocker, but the image is not. Keep the disk with the image somewhere safe. Have your BitLocker recovery key at hand and turn BitLocker on again after putting the image back."
                         ),
                     );
                 }
@@ -2883,24 +2998,24 @@ impl App {
                 Icon::Restore,
                 t!("Systemabbild zurückspielen", "Restoring a system image"),
                 t!(
-                    "Geht nur außerhalb des laufenden Windows, nicht aus ZEBack heraus",
-                    "Only works outside the running Windows, not from within ZEBack"
+                    "Das erledigt Windows selbst – so geht es",
+                    "Windows does this itself – here is how"
                 ),
                 None,
             );
             for (number, step) in [
                 t!("Datenträger mit dem Abbild anschließen.", "Connect the disk that holds the image."),
                 t!(
-                    "Einstellungen → System → Wiederherstellung → „Erweiterter Start“ → Jetzt neu starten. Startet Windows nicht mehr, vom Installations-Stick booten und „Computerreparaturoptionen“ wählen.",
-                    "Settings → System → Recovery → “Advanced startup” → Restart now. If Windows no longer starts, boot from the installation USB stick and choose “Repair your computer”."
+                    "In Windows: Einstellungen → System → Wiederherstellung → „Erweiterter Start“ → „Jetzt neu starten“. Startet Windows nicht mehr, starte den PC vom Rettungs-USB-Stick.",
+                    "In Windows: Settings → System → Recovery → “Advanced startup” → “Restart now”. If Windows no longer starts, start the PC from the recovery USB stick."
                 ),
                 t!(
                     "Problembehandlung → Erweiterte Optionen → Weitere Wiederherstellungsoptionen → Systemimage-Wiederherstellung.",
                     "Troubleshoot → Advanced options → See more recovery options → System Image Recovery."
                 ),
                 t!(
-                    "Abbild auswählen und bestätigen. Das Ziellaufwerk wird dabei vollständig überschrieben.",
-                    "Select the image and confirm. The target drive will be completely overwritten."
+                    "Abbild auswählen und bestätigen. Achtung: Alles, was jetzt auf dem PC ist, wird ersetzt.",
+                    "Select the image and confirm. Note: everything that is on the PC now will be replaced."
                 ),
             ]
             .into_iter()
@@ -2917,8 +3032,8 @@ impl App {
             widgets::text(
                 ui,
                 t!(
-                    "Startet der PC gar nicht mehr, hilft ein Rettungs-USB-Stick. Leg ihn am besten jetzt an – Windows bringt dafür einen Assistenten mit.",
-                    "If the PC no longer starts at all, a recovery USB stick helps. It is best to create one now – Windows comes with a wizard for this."
+                    "Tipp: Erstelle jetzt einen Rettungs-USB-Stick. Damit startet der PC auch dann, wenn Windows kaputt ist.",
+                    "Tip: create a recovery USB stick now. It starts the PC even when Windows is broken."
                 ),
                 theme::regular(12.0),
                 TEXT_MUTED,
@@ -2943,8 +3058,8 @@ impl App {
                 Icon::Add,
                 t!("Zusätzlich", "Additional"),
                 t!(
-                    "Programme vorher schließen – geöffnete Dateien werden sonst übersprungen",
-                    "Close the programs first – otherwise open files are skipped"
+                    "Schließe diese Programme vorher, sonst fehlen Dateien",
+                    "Close these programs first, or files will be missing"
                 ),
                 Some(&badge),
             );
@@ -2977,8 +3092,8 @@ impl App {
                 warning_line(
                     ui,
                     t!(
-                        "Passwörter aus Chrome und Edge sind an dieses Windows-Konto gebunden und lassen sich nicht auf einen anderen PC übertragen.",
-                        "Passwords from Chrome and Edge are tied to this Windows account and cannot be transferred to another PC."
+                        "Gespeicherte Passwörter aus Chrome und Edge funktionieren nur auf diesem PC mit diesem Benutzer.",
+                        "Saved passwords from Chrome and Edge only work on this PC with this user."
                     ),
                 );
             }
@@ -2995,7 +3110,7 @@ impl App {
                 ui,
                 Icon::Folder,
                 t!("Ordner", "Folders"),
-                t!("Standardordner und eigene Ordner", "Standard folders and your own folders"),
+                t!("Hake an, was gesichert werden soll", "Tick what you want to back up"),
                 Some(&badge),
             );
             ui.spacing_mut().item_spacing.y = 2.0;
@@ -3071,8 +3186,8 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Noch kein Ziel eingerichtet. Wähle einen Ordner, z. B. auf einem USB-Stick – oder lege unter „Sicherungsziele“ eine Netzwerkfreigabe oder eine Nextcloud an.",
-                        "No target set up yet. Choose a folder, e.g. on a USB stick – or add a network share or a Nextcloud under “Backup targets”."
+                        "Du hast noch kein Ziel. Klicke auf „Ordner hinzufügen“ und wähle z. B. einen USB-Stick. Netzwerk und Cloud richtest du unter „Ziele verwalten“ ein.",
+                        "You have no target yet. Click “Add folder” and choose a USB stick, for example. Network and cloud targets are set up under “Manage targets”."
                     ),
                     theme::regular(13.0),
                     TEXT,
@@ -3101,7 +3216,7 @@ impl App {
                 }
             }
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 add_folder = widgets::button(ui, t!("Ordner hinzufügen", "Add folder"), Kind::Secondary, Some(Icon::Add)).clicked();
                 manage = widgets::button(ui, t!("Ziele verwalten", "Manage targets"), Kind::Ghost, Some(Icon::Settings)).clicked();
             });
@@ -3147,7 +3262,7 @@ impl App {
             ),
             None if only_cloud => (
                 std::env::temp_dir(),
-                t!("Frei im Temp-Ordner", "Free in the temp folder").to_string(),
+                t!("Frei auf diesem PC", "Free on this PC").to_string(),
                 t!("Der Temp-Ordner ist nicht erreichbar.", "The temp folder is not reachable.").to_string(),
                 true,
             ),
@@ -3160,8 +3275,8 @@ impl App {
             widgets::text(
                 ui,
                 t!(
-                    "Die ZIP-Datei wird vor dem Upload vorübergehend im Temp-Ordner dieses PCs erstellt.",
-                    "Before the upload, the ZIP file is created temporarily in this PC's temp folder."
+                    "Die Sicherung wird erst auf diesem PC erstellt und dann hochgeladen. Dafür muss hier genug Platz frei sein.",
+                    "The backup is first created on this PC and then uploaded. This needs enough free space here."
                 ),
                 theme::regular(12.0),
                 TEXT_MUTED,
@@ -3189,8 +3304,8 @@ impl App {
                     warning_line(
                         ui,
                         t!(
-                            "Der freie Platz ist kleiner als die ausgewählten Daten. Komprimiert wird die Sicherung meist kleiner – es kann trotzdem knapp werden.",
-                            "The free space is smaller than the selected data. Compressed, the backup usually gets smaller – it may still be tight."
+                            "Der Platz könnte nicht reichen. Die Sicherung wird zwar meist kleiner als die Daten – es wird aber knapp.",
+                            "There may not be enough space. The backup is usually smaller than the data – but it will be tight."
                         ),
                     );
                 }
@@ -3198,8 +3313,8 @@ impl App {
                     warning_line(
                         ui,
                         t!(
-                            "Dieses Laufwerk ist mit FAT32 formatiert und speichert höchstens 4 GB pro Datei. Die Sicherung wird voraussichtlich größer – Laufwerk mit exFAT oder NTFS formatieren.",
-                            "This drive is formatted with FAT32 and stores at most 4 GB per file. The backup will probably be larger – format the drive with exFAT or NTFS."
+                            "Dieses Laufwerk kann nur Dateien bis 4 GB speichern (Format FAT32). Die Sicherung wird wohl größer. Nimm ein anderes Laufwerk oder formatiere es mit exFAT.",
+                            "This drive can only store files up to 4 GB (FAT32 format). The backup will probably be larger. Use another drive or format it with exFAT."
                         ),
                     );
                 }
@@ -3253,7 +3368,7 @@ impl App {
             widgets::kv_row(
                 ui,
                 t!("Verschlüsselung", "Encryption"),
-                if self.cfg.encrypt { t!("AES-256 mit Passwort", "AES-256 with password") } else { t!("keine", "none") },
+                if self.cfg.encrypt { t!("ja, mit Passwort", "yes, with password") } else { t!("keine", "none") },
             );
             widgets::kv_row(ui, t!("Dateiname", "File name"), &backup::archive_file_name(&identity, false));
             ui.add_space(8.0);
@@ -3266,13 +3381,13 @@ impl App {
                 ui,
                 if self.cfg.encrypt {
                     t!(
-                        "Merkt sich diese Auswahl für Läufe mit einem Klick oder nach Zeitplan. Das Verschlüsselungs-Passwort wird dafür in der Windows-Anmeldeinformationsverwaltung gespeichert.",
-                        "Remembers this selection for runs with one click or on a schedule. For this, the encryption password is stored in the Windows Credential Manager."
+                        "Speichert diese Sicherung, damit sie später auf Knopfdruck oder von selbst läuft. Dein Passwort bewahrt Windows dafür sicher auf.",
+                        "Saves this backup so it can run later at a click or by itself. Windows keeps your password safe for this."
                     )
                 } else {
                     t!(
-                        "Merkt sich diese Auswahl. Der Auftrag läuft dann mit einem Klick oder nach Zeitplan.",
-                        "Remembers this selection. The job then runs with one click or on a schedule."
+                        "Speichert diese Sicherung, damit sie später auf Knopfdruck oder von selbst läuft.",
+                        "Saves this backup so it can run later at a click or by itself."
                     )
                 },
                 theme::regular(12.0),
@@ -3299,8 +3414,8 @@ impl App {
                 &mut self.cfg.encrypt,
                 t!("Mit Passwort verschlüsseln", "Encrypt with a password"),
                 t!(
-                    "AES-256. Ohne das Passwort ist die Sicherung nicht wiederherstellbar – es wird nirgends gespeichert.",
-                    "AES-256. Without the password the backup cannot be restored – it is not stored anywhere."
+                    "Ohne das Passwort kommt niemand an die Sicherung – auch du nicht. Merk es dir gut.",
+                    "Without the password nobody can open the backup – not even you. Remember it well."
                 ),
             );
             if self.cfg.encrypt {
@@ -3315,8 +3430,8 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Verschlüsselt werden die Dateiinhalte; Datei- und Ordnernamen bleiben in der ZIP-Datei lesbar. Außerhalb von ZEBack lässt sich die Sicherung z. B. mit 7-Zip öffnen; ältere Windows-Versionen können das nicht von sich aus.",
-                        "The file contents are encrypted; file and folder names remain readable in the ZIP file. Outside ZEBack the backup can be opened with 7-Zip, for example; older Windows versions cannot do this on their own."
+                        "Geschützt ist der Inhalt der Dateien; ihre Namen bleiben sichtbar. Ohne ZEBack öffnest du die Sicherung z. B. mit 7-Zip.",
+                        "The contents of the files are protected; their names stay visible. Without ZEBack you can open the backup with 7-Zip, for example."
                     ),
                     theme::regular(12.0),
                     TEXT_MUTED,
@@ -3330,8 +3445,8 @@ impl App {
                 &mut self.cfg.verify_after_backup,
                 t!("Sicherung danach prüfen", "Verify backup afterwards"),
                 t!(
-                    "Die fertige ZIP-Datei wird einmal komplett gelesen und mit den Prüfsummen verglichen. Dauert etwas länger.",
-                    "The finished ZIP file is read completely once and compared with the checksums. Takes a little longer."
+                    "Liest die fertige Sicherung noch einmal komplett und findet so Fehler. Dauert etwas länger.",
+                    "Reads the finished backup once more from start to end to find errors. Takes a little longer."
                 ),
             );
             ui.add_space(6.0);
@@ -3342,8 +3457,8 @@ impl App {
                 &mut self.cfg.skip_online_only,
                 t!("Nur-online-Dateien auslassen", "Skip online-only files"),
                 t!(
-                    "OneDrive-Dateien, die nur in der Cloud liegen, werden nicht extra heruntergeladen.",
-                    "OneDrive files that exist only in the cloud are not downloaded just for the backup."
+                    "Dateien, die nur in OneDrive liegen, werden nicht extra heruntergeladen.",
+                    "Files that exist only in OneDrive are not downloaded just for the backup."
                 ),
             );
         });
@@ -3360,8 +3475,8 @@ impl App {
                     0,
                     t!("Welche Sicherung soll wiederhergestellt werden?", "Which backup do you want to restore?"),
                     t!(
-                        "Öffne eine ZIP-Datei oder lass ZEBack auf deinen Sicherungszielen suchen.",
-                        "Open a ZIP file or let ZEBack search your backup targets."
+                        "Öffne eine Sicherung – oder lass ZEBack danach suchen.",
+                        "Open a backup – or let ZEBack look for one."
                     ),
                 );
                 self.ui_restore_pick(ui);
@@ -3372,8 +3487,8 @@ impl App {
                     0,
                     t!("Welche Sicherung soll wiederhergestellt werden?", "Which backup do you want to restore?"),
                     t!(
-                        "Diese Sicherung ist geöffnet. Passt sie, geht es mit „Weiter“ zum Inhalt.",
-                        "This backup is open. If it is the right one, “Next” takes you to its contents."
+                        "Ist das die richtige? Dann klicke auf „Weiter“.",
+                        "Is this the right one? Then click “Next”."
                     ),
                 );
                 self.card_archive(ui, &info);
@@ -3404,8 +3519,8 @@ impl App {
                         widgets::text(
                             ui,
                             t!(
-                                "Diese ZIP-Datei stammt nicht von ZEBack. Ohne Einzelauswahl wird sie vollständig entpackt.",
-                                "This ZIP file was not created by ZEBack. Unless you pick individual files, it is extracted completely."
+                                "Diese ZIP-Datei stammt nicht von ZEBack. Sie wird komplett entpackt – außer du wählst unten einzelne Dateien aus.",
+                                "This ZIP file was not made by ZEBack. It is extracted completely – unless you pick individual files below."
                             ),
                             theme::regular(13.0),
                             TEXT,
@@ -3421,8 +3536,8 @@ impl App {
                     2,
                     t!("Wohin soll wiederhergestellt werden?", "Where do you want to restore to?"),
                     t!(
-                        "In ein Benutzerprofil dieses PCs oder gesammelt in einen Ordner deiner Wahl.",
-                        "Into a user profile on this PC or all together into a folder of your choice."
+                        "Zurück in die Ordner eines Benutzers oder in einen Ordner deiner Wahl.",
+                        "Back into a user's folders or into a folder of your choice."
                     ),
                 );
                 self.card_restore_target(ui, &info);
@@ -3443,15 +3558,19 @@ impl App {
     }
 
     fn ui_restore_pick(&mut self, ui: &mut Ui) {
-        let width = ((ui.available_width() - GAP) / 2.0).min(400.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = GAP;
+        // Zwei Kacheln nebeneinander; in schmalen Fenstern untereinander.
+        let stacked = ui.available_width() < 470.0;
+        let width = if stacked { ui.available_width() } else { ((ui.available_width() - GAP) / 2.0).min(400.0) };
+        let layout = if stacked { Layout::top_down(Align::Min) } else { Layout::left_to_right(Align::Min) };
+        let height = if stacked { 176.0 * 2.0 + GAP } else { 176.0 };
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), height), layout, |ui| {
+            ui.spacing_mut().item_spacing = vec2(GAP, GAP);
             if widgets::action_tile(
                 ui,
                 vec2(width, 176.0),
                 Icon::OpenFile,
-                t!("ZIP-Datei öffnen", "Open ZIP file"),
-                t!("USB-Stick, Festplatte oder dieser PC", "USB stick, hard drive or this PC"),
+                t!("Sicherung öffnen", "Open a backup"),
+                t!("USB-Stick, Festplatte, PC", "USB stick, hard drive, PC"),
             )
             .clicked()
                 && let Some(path) = rfd::FileDialog::new()
@@ -3465,8 +3584,8 @@ impl App {
                 ui,
                 vec2(width, 176.0),
                 Icon::Drive,
-                t!("Auf Sicherungszielen suchen", "Search backup targets"),
-                t!("Ordner, Freigaben und Nextcloud", "Folders, shares and Nextcloud"),
+                t!("Sicherung suchen", "Find a backup"),
+                t!("Auf deinen Sicherungszielen", "On your backup targets"),
             )
             .clicked()
             {
@@ -3477,7 +3596,8 @@ impl App {
         ui.add_space(GAP);
         let create_stick = ui
             .scope(|ui| {
-                ui.set_max_width((width * 2.0 + GAP).min(ui.available_width()));
+                let tiles = if stacked { width } else { width * 2.0 + GAP };
+                ui.set_max_width(tiles.min(ui.available_width()));
                 Self::card_image_restore_help(ui)
             })
             .inner;
@@ -3528,13 +3648,13 @@ impl App {
                         widgets::kv_row(
                             ui,
                             t!("Art", "Type"),
-                            &tr!("Teilsicherung · Kette aus {} Sicherungen", "Partial backup · chain of {} backups", chain.len()),
+                            &tr!("Teilsicherung · gehört zu {} Sicherungen", "Partial backup · one of {} backups", chain.len()),
                         );
                         widgets::text(
                             ui,
                             t!(
-                                "Die Vollsicherung und alle Teilsicherungen bis zu dieser liegen im selben Ordner. Sie werden zusammen wiederhergestellt; von jeder Datei gilt der neueste Stand.",
-                                "The full backup and all partial backups up to this one are in the same folder. They are restored together; the newest version of each file is used."
+                                "Diese Sicherung baut auf früheren auf. ZEBack hat alle gefunden und stellt sie zusammen wieder her – jede Datei im neuesten Stand.",
+                                "This backup builds on earlier ones. ZEBack has found them all and restores them together – each file in its newest version."
                             ),
                             theme::regular(12.0),
                             TEXT_MUTED,
@@ -3545,8 +3665,8 @@ impl App {
                         warning_line(
                             ui,
                             &tr!(
-                                "Diese Sicherung enthält nur, was sich geändert hat. Die Vollsicherung {} liegt nicht im selben Ordner – wiederhergestellt werden deshalb nur die geänderten Dateien.",
-                                "This backup only contains what has changed. The full backup {} is not in the same folder – so only the changed files are restored.",
+                                "Diese Sicherung enthält nur geänderte Dateien. Die vollständige Sicherung {} fehlt in diesem Ordner – deshalb kommen nur die geänderten Dateien zurück.",
+                                "This backup only contains changed files. The complete backup {} is missing from this folder – so only the changed files come back.",
                                 manifest.base.as_deref().unwrap_or(t!("dazu", "it is based on"))
                             ),
                         );
@@ -3561,7 +3681,7 @@ impl App {
                 widgets::text_field(ui, "restore_password", &mut self.restore_password, "", true, width);
             }
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 verify = widgets::button(ui, t!("Sicherung prüfen", "Verify backup"), Kind::Secondary, Some(Icon::Check)).clicked();
                 close = widgets::button(ui, t!("Andere Sicherung", "Other backup"), Kind::Secondary, Some(Icon::OpenFile)).clicked();
             });
@@ -3617,8 +3737,8 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Ohne Auswahl werden die angehakten Ordner vollständig wiederhergestellt.",
-                        "Without a selection, the ticked folders are restored completely."
+                        "Wählst du nichts aus, kommen die angehakten Ordner komplett zurück.",
+                        "If you pick nothing, the ticked folders come back completely."
                     ),
                     theme::regular(13.0),
                     TEXT,
@@ -3635,14 +3755,14 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Es wird nur diese Auswahl wiederhergestellt; die Häkchen an den Ordnern gelten dann nicht.",
-                        "Only this selection is restored; the ticks on the folders then do not apply."
+                        "Es kommt nur diese Auswahl zurück. Die Häkchen an den Ordnern zählen dann nicht.",
+                        "Only this selection comes back. The ticks on the folders do not count then."
                     ),
                     theme::regular(12.0),
                     TEXT_MUTED,
                 );
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     browse = widgets::button(ui, t!("Auswahl ändern", "Change selection"), Kind::Secondary, Some(Icon::Folder)).clicked();
                     clear = widgets::button(ui, t!("Auswahl aufheben", "Clear selection"), Kind::Ghost, Some(Icon::Close)).clicked();
                 });
@@ -3663,8 +3783,8 @@ impl App {
                     Icon::Folder,
                     t!("Zielordner", "Target folder"),
                     t!(
-                        "Laufwerkssicherungen werden in einen Ordner deiner Wahl zurückgespielt",
-                        "Drive backups are restored into a folder of your choice"
+                        "Wähle einen Ordner, in den alles zurückkommt",
+                        "Choose a folder for everything to come back into"
                     ),
                     None,
                 );
@@ -3677,8 +3797,8 @@ impl App {
                     Icon::User,
                     t!("In ein Benutzerprofil", "Into a user profile"),
                     t!(
-                        "Desktop, Dokumente usw. landen in den Ordnern des Profils",
-                        "Desktop, Documents etc. end up in the profile's folders"
+                        "Desktop, Dokumente usw. kommen wieder an ihren Platz",
+                        "Desktop, Documents etc. go back where they belong"
                     ),
                 )
                 .clicked()
@@ -3735,8 +3855,8 @@ impl App {
                     Icon::User,
                     t!("In welches Profil?", "Into which profile?"),
                     t!(
-                        "Passt auch, wenn der Benutzer auf diesem PC anders heißt als in der Sicherung",
-                        "Also works if the user has a different name on this PC than in the backup"
+                        "Der Benutzer darf hier anders heißen als in der Sicherung",
+                        "The user may have a different name here than in the backup"
                     ),
                     None,
                 );
@@ -3760,7 +3880,7 @@ impl App {
                 Mark::Radio,
                 Icon::Check,
                 t!("Behalten", "Keep"),
-                t!("Nur fehlende Dateien wiederherstellen", "Restore only missing files"),
+                t!("Vorhandene Dateien bleiben, wie sie sind", "Existing files stay as they are"),
             )
             .clicked()
             {
@@ -3772,7 +3892,7 @@ impl App {
                 Mark::Radio,
                 Icon::Sync,
                 t!("Ersetzen", "Replace"),
-                t!("Durch die Version aus der Sicherung überschreiben", "Overwrite with the version from the backup"),
+                t!("Die Datei aus der Sicherung ersetzt die vorhandene", "The file from the backup replaces the existing one"),
             )
             .clicked()
             {
@@ -3937,8 +4057,8 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Ein Sicherungsziel ist ein Ort, an dem die ZIP-Datei landet: ein Ordner oder USB-Stick, eine Netzwerkfreigabe (SMB) oder eine Nextcloud. Du kannst mehrere anlegen und beim Sichern eines oder mehrere anhaken.",
-                        "A backup target is a place where the ZIP file ends up: a folder or USB stick, a network share (SMB) or a Nextcloud. You can create several and tick one or more of them when backing up."
+                        "Ein Sicherungsziel ist der Ort, an dem deine Sicherung liegt – zum Beispiel ein USB-Stick, eine Netzwerkfreigabe oder eine Cloud. Du kannst mehrere anlegen.",
+                        "A backup target is the place where your backup is stored – for example a USB stick, a network share or a cloud. You can add several."
                     ),
                     theme::regular(13.0),
                     TEXT,
@@ -3997,8 +4117,8 @@ impl App {
                         widgets::text(
                             ui,
                             t!(
-                                "Öffnet die Anmeldeseite deiner Nextcloud. Nach dem Bestätigen trägt die App Benutzername und App-Passwort selbst ein – oder du füllst beides von Hand aus:",
-                                "Opens the sign-in page of your Nextcloud. After you confirm, the app enters the user name and app password itself – or you fill in both by hand:"
+                                "Am einfachsten: im Browser anmelden und bestätigen. ZEBack trägt den Rest selbst ein. Oder du füllst die Felder von Hand aus:",
+                                "The easiest way: sign in in your browser and confirm. ZEBack fills in the rest. Or fill in the fields by hand:"
                             ),
                             theme::regular(12.0),
                             TEXT_MUTED,
@@ -4089,8 +4209,8 @@ impl App {
                         widgets::text(
                             ui,
                             t!(
-                                "Nutzt den OpenSSH-Client von Windows. Der Server wird beim ersten Verbinden gemerkt; meldet er sich später mit einem anderen Schlüssel, wird die Verbindung abgelehnt. Die Schlüsseldatei darf kein Kennwort haben.",
-                                "Uses the Windows OpenSSH client. The server is remembered on first connection; if it later presents a different key, the connection is refused. The key file must not have a passphrase."
+                                "Beim ersten Verbinden merkt sich ZEBack den Server. Antwortet später ein anderer Server unter dieser Adresse, wird die Verbindung abgelehnt. Die Schlüsseldatei darf kein eigenes Passwort haben.",
+                                "On the first connection ZEBack remembers the server. If a different server later answers at this address, the connection is refused. The key file must not have a password of its own."
                             ),
                             theme::regular(12.0),
                             TEXT_MUTED,
@@ -4106,8 +4226,8 @@ impl App {
                         &mut target.save_password,
                         t!("Passwort merken", "Remember password"),
                         t!(
-                            "Geschützt in der Windows-Anmeldeinformationsverwaltung, nicht in einer Datei.",
-                            "Protected in the Windows Credential Manager, not in a file."
+                            "Windows bewahrt es sicher auf – du musst es nicht jedes Mal eingeben.",
+                            "Windows keeps it safe – you do not have to enter it every time."
                         ),
                     );
                 }
@@ -4216,8 +4336,8 @@ impl App {
                 &mut self.cfg.check_updates,
                 t!("Beim Start nach Updates suchen", "Check for updates at startup"),
                 t!(
-                    "Fragt bei GitHub nach der neuesten Veröffentlichung. Heruntergeladen und installiert wird erst, wenn du es anstößt.",
-                    "Asks GitHub for the latest release. Nothing is downloaded or installed until you start it."
+                    "ZEBack schaut nach, ob es eine neue Version gibt. Installiert wird nur, wenn du es willst.",
+                    "ZEBack checks whether there is a new version. It is only installed if you want it."
                 ),
             );
             let installable = self.update.as_ref().is_some_and(|release| release.installer.is_some());
@@ -4236,13 +4356,13 @@ impl App {
                     ui,
                     if installable {
                         t!(
-                            "Der Installer wird von GitHub geladen und geprüft. Danach schließt sich ZEBack, Windows fragt nach Adminrechten, und die neue Version startet von selbst.",
-                            "The installer is downloaded from GitHub and checked. ZEBack then closes, Windows asks for administrator rights, and the new version starts by itself."
+                            "ZEBack lädt die neue Version, schließt sich kurz und startet danach von selbst wieder. Windows fragt einmal nach deiner Erlaubnis.",
+                            "ZEBack downloads the new version, closes briefly and then starts again by itself. Windows asks for your permission once."
                         )
                     } else {
                         t!(
-                            "Diese Veröffentlichung enthält keinen Installer für diesen PC. Du kannst sie auf GitHub ansehen.",
-                            "This release contains no installer for this PC. You can look at it on GitHub."
+                            "Für diesen PC gibt es keine fertige Installationsdatei. Du findest die Version auf GitHub.",
+                            "There is no ready-made installer for this PC. You can find the version on GitHub."
                         )
                     },
                     theme::regular(12.0),
@@ -4288,7 +4408,7 @@ impl App {
                 ui,
                 Icon::Desktop,
                 t!("Windows-Benachrichtigung", "Windows notification"),
-                t!("Nach Aufträgen, die ohne Fenster laufen", "After jobs that run without a window"),
+                t!("Für Aufträge, die von selbst laufen", "For jobs that run by themselves"),
                 None,
             );
             widgets::segmented(
@@ -4305,16 +4425,16 @@ impl App {
                 ui,
                 match self.cfg.notify {
                     ReportMode::Never => t!(
-                        "Geplante Aufträge laufen still – auch wenn sie scheitern.",
-                        "Scheduled jobs run silently – even if they fail."
+                        "Du bekommst keine Meldung – auch nicht, wenn etwas schiefgeht.",
+                        "You get no message – not even when something goes wrong."
                     ),
                     ReportMode::Errors => t!(
-                        "Scheitert ein geplanter Auftrag, erscheint ein Hinweisfenster, das stehen bleibt, bis du es schließt.",
-                        "If a scheduled job fails, a message window appears and stays until you close it."
+                        "Geht etwas schief, erscheint ein Fenster. Es bleibt, bis du es schließt.",
+                        "If something goes wrong, a window appears. It stays until you close it."
                     ),
                     ReportMode::Always => t!(
-                        "Zusätzlich meldet eine kurze Benachrichtigung jeden gelungenen Lauf.",
-                        "In addition, a short notification reports every successful run."
+                        "Zusätzlich siehst du jede gelungene Sicherung kurz unten rechts.",
+                        "You also briefly see every successful backup at the bottom right."
                     ),
                 },
                 theme::regular(12.0),
@@ -4352,7 +4472,7 @@ impl App {
                 ui,
                 Icon::Mail,
                 t!("E-Mail-Bericht", "Email report"),
-                t!("Nach jedem Auftrag, ob geplant oder von Hand gestartet", "After every job, whether scheduled or started manually"),
+                t!("Eine E-Mail nach jedem Auftrag", "An email after every job"),
                 None,
             );
             let mail = &mut self.cfg.mail;
@@ -4400,8 +4520,8 @@ impl App {
             widgets::text(
                 ui,
                 t!(
-                    "Gesendet wird nur verschlüsselt. Das Passwort liegt in der Windows-Anmeldeinformationsverwaltung, nicht in einer Datei.",
-                    "Mail is only sent encrypted. The password is kept in the Windows Credential Manager, not in a file."
+                    "Die E-Mail geht verschlüsselt raus. Dein Passwort bewahrt Windows sicher auf.",
+                    "The email is sent encrypted. Windows keeps your password safe."
                 ),
                 theme::regular(12.0),
                 TEXT_MUTED,
@@ -4437,8 +4557,8 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Noch kein Auftrag gespeichert. Stelle unter „Sichern“ zusammen, was wohin gesichert werden soll, und wähle im letzten Schritt „Als Auftrag speichern“.",
-                        "No job saved yet. Under “Back up”, put together what should be backed up where, and choose “Save as job” in the last step."
+                        "Du hast noch keinen Auftrag. Gehe zu „Sichern“, wähle aus, was wohin soll, und klicke am Ende auf „Als Auftrag speichern“.",
+                        "You have no job yet. Go to “Back up”, choose what goes where, and click “Save as job” at the end."
                     ),
                     theme::regular(13.0),
                     TEXT,
@@ -4475,8 +4595,8 @@ impl App {
             self.set_result(
                 Level::Ok,
                 t!(
-                    "Neuer Auftrag\nStelle die Sicherung zusammen und wähle im letzten Schritt „Als Auftrag speichern“.",
-                    "New job\nPut the backup together and choose “Save as job” in the last step."
+                    "Neuer Auftrag\nWähle aus, was wohin soll, und klicke am Ende auf „Als Auftrag speichern“.",
+                    "New job\nChoose what goes where and click “Save as job” at the end."
                 ),
             );
         }
@@ -4490,8 +4610,8 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Ein Auftrag merkt sich, was wohin gesichert wird. Er läuft mit einem Klick, nach Zeitplan über die Windows-Aufgabenplanung oder aus einem Skript – und räumt auf Wunsch alte Sicherungen weg.",
-                        "A job remembers what is backed up where. It runs with one click, on a schedule via Windows Task Scheduler or from a script – and clears out old backups if you want."
+                        "Ein Auftrag ist eine gespeicherte Sicherung. Du startest ihn mit einem Klick – oder er läuft von selbst, zum Beispiel jeden Abend. Alte Sicherungen räumt er auf Wunsch weg.",
+                        "A job is a saved backup. You start it with one click – or it runs by itself, for example every evening. It can clear out old backups if you want."
                     ),
                     theme::regular(13.0),
                     TEXT,
@@ -4518,7 +4638,7 @@ impl App {
         let confirm_delete = self.job_delete == Some(id);
         let (mut run, mut save, mut delete) = (false, false, false);
         widgets::card(ui, |ui| {
-            widgets::card_header(ui, Icon::Sync, t!("Auftrag", "Job"), t!("Zeitplan und Aufbewahrung", "Schedule and retention"), None);
+            widgets::card_header(ui, Icon::Sync, t!("Auftrag", "Job"), t!("Wann er läuft und was er aufhebt", "When it runs and what it keeps"), None);
             let width = ui.available_width();
             ui.push_id(("job_editor", id), |ui| {
                 widgets::field_label(ui, t!("Name", "Name"));
@@ -4531,7 +4651,7 @@ impl App {
                     widgets::kv_row(
                         ui,
                         t!("Verschlüsselung", "Encryption"),
-                        if job.encrypt { t!("AES-256, Passwort gespeichert", "AES-256, password stored") } else { t!("keine", "none") },
+                        if job.encrypt { t!("ja, Passwort gespeichert", "yes, password stored") } else { t!("keine", "none") },
                     );
                 });
 
@@ -4573,13 +4693,13 @@ impl App {
                     &mut job.incremental,
                     t!("Nur Geändertes sichern", "Back up changes only"),
                     t!(
-                        "Zwischen den Vollsicherungen entstehen kleine Teilsicherungen mit den neuen und geänderten Dateien.",
-                        "Between the full backups, small partial backups with the new and changed files are created."
+                        "Spart Zeit und Platz: Meist werden nur neue und geänderte Dateien gesichert.",
+                        "Saves time and space: most runs only back up new and changed files."
                     ),
                 );
                 if job.incremental {
                     ui.add_space(4.0);
-                    widgets::field_label(ui, t!("Vollsicherung bei jedem …", "Full backup on every …"));
+                    widgets::field_label(ui, t!("Alles komplett sichern bei jedem …", "Back up everything on every …"));
                     widgets::segmented(
                         ui,
                         "full_every",
@@ -4593,11 +4713,11 @@ impl App {
                     ui,
                     if job.incremental {
                         t!(
-                            "Vollsicherungen (samt Teilsicherungen) je Ziel aufbewahren",
-                            "Full backups (with their partial backups) to keep per target"
+                            "So viele vollständige Sicherungen aufheben",
+                            "Keep this many complete backups"
                         )
                     } else {
-                        t!("Sicherungen je Ziel aufbewahren", "Backups to keep per target")
+                        t!("So viele Sicherungen aufheben", "Keep this many backups")
                     },
                 );
                 widgets::segmented(
@@ -4612,14 +4732,14 @@ impl App {
                         t!("Es wird nie etwas gelöscht.", "Nothing is ever deleted.").to_string()
                     } else if job.incremental {
                         tr!(
-                            "Nach einem gelungenen Lauf bleiben die {} neuesten Vollsicherungen dieses Profils mit ihren Teilsicherungen je Ziel; ältere werden gelöscht.",
-                            "After a successful run, the {} newest full backups of this profile with their partial backups are kept per target; older ones are deleted.",
+                            "Die {} neuesten vollständigen Sicherungen bleiben, samt ihren Teilsicherungen. Ältere löscht ZEBack nach einer gelungenen Sicherung.",
+                            "The {} newest complete backups are kept, with their partial backups. ZEBack deletes older ones after a successful backup.",
                             job.keep_last
                         )
                     } else {
                         tr!(
-                            "Nach einem gelungenen Lauf bleiben die {} neuesten Sicherungen dieses Profils je Ziel; ältere werden gelöscht.",
-                            "After a successful run, the {} newest backups of this profile are kept per target; older ones are deleted.",
+                            "Die {} neuesten Sicherungen bleiben. Ältere löscht ZEBack nach einer gelungenen Sicherung.",
+                            "The {} newest backups are kept. ZEBack deletes older ones after a successful backup.",
                             job.keep_last
                         )
                     },
@@ -4682,8 +4802,8 @@ impl App {
             widgets::text(
                 ui,
                 t!(
-                    "„Im Browser anmelden“ erledigt das alles selbst und funktioniert auch mit Zwei-Faktor-Anmeldung. Von Hand geht es so:",
-                    "“Sign in via browser” does all of this for you and also works with two-factor authentication. By hand it goes like this:"
+                    "Normalerweise reicht „Im Browser anmelden“. Wenn nicht, geht es so:",
+                    "Normally “Sign in via browser” is enough. If not, do this:"
                 ),
                 theme::regular(12.5),
                 TEXT_MUTED,
@@ -4703,8 +4823,8 @@ impl App {
                     "Enter “ZEBack” as the name and click “Create new app password”."
                 ),
                 t!(
-                    "Das angezeigte Passwort links bei „App-Passwort“ einfügen.",
-                    "Paste the password shown into “App password” on the left."
+                    "Das angezeigte Passwort hier bei „App-Passwort“ einfügen.",
+                    "Paste the password shown into “App password” here."
                 ),
             ]
             .into_iter()
@@ -4774,9 +4894,8 @@ impl App {
 
     fn ui_action_bar(&mut self, ui: &mut Ui) {
         let response = egui::Frame::new()
-            .inner_margin(Margin::symmetric(26, 12))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width().min(CONTENT_WIDTH));
+            .inner_margin(Margin::symmetric(0, 12))
+            .show(ui, |ui| in_content_column(ui, |ui| {
                 if self.running.is_some() {
                     self.ui_running(ui);
                     return;
@@ -4868,7 +4987,7 @@ impl App {
                     }
                     _ => {}
                 }
-            })
+            }))
             .response;
         let line = ui.max_rect().x_range();
         ui.painter().hline(line, response.rect.top(), Stroke::new(1.0, BORDER));
@@ -4937,9 +5056,11 @@ impl App {
             }
         }
         let facts = facts.join("  ·  ");
-        ui.horizontal(|ui| {
-            widgets::spinner(ui, 18.0, ACCENT);
-            let width = (ui.available_width() - 200.0).max(80.0);
+        let cancel_label = if cancelling { t!("Wird abgebrochen", "Cancelling") } else { t!("Abbrechen", "Cancel") };
+        let hide_label = t!("Im Hintergrund", "In background");
+        let (mut hide, mut cancel) = (false, false);
+        // Was gerade geschieht, mit dem Stand dahinter – in der Breite `width`.
+        let status_line = |ui: &mut Ui, width: f32| {
             let (rect, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
             let status = widgets::elided(ui, &self.status, theme::bold(14.0), TEXT_BRIGHT, width * 0.6);
             let status_width = status.size().x;
@@ -4950,15 +5071,42 @@ impl App {
                 detail,
                 TEXT_MUTED,
             );
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add_enabled_ui(!cancelling, |ui| {
-                    let label = if cancelling { t!("Wird abgebrochen", "Cancelling") } else { t!("Abbrechen", "Cancel") };
-                    if widgets::button(ui, label, Kind::Danger, Some(Icon::Close)).clicked() {
-                        running.cancel.store(true, Ordering::Relaxed);
-                    }
-                });
+        };
+        // "Abbrechen" und "Im Hintergrund", von rechts nach links.
+        let mut buttons = |ui: &mut Ui| {
+            ui.add_enabled_ui(!cancelling, |ui| {
+                cancel |= widgets::button(ui, cancel_label, Kind::Danger, Some(Icon::Close)).clicked();
             });
+            hide |= widgets::button(ui, hide_label, Kind::Secondary, Some(Icon::Desktop))
+                .on_hover_text(t!(
+                    "Das Fenster verschwindet, der Vorgang läuft weiter. Ein Klick auf das ZEBack-Symbol neben der Uhr holt es zurück.",
+                    "The window disappears and the job keeps running. Click the ZEBack icon next to the clock to bring it back."
+                ))
+                .clicked();
+        };
+        let gap = ui.spacing().item_spacing.x;
+        let buttons_width = widgets::button_width(ui, cancel_label, Kind::Danger, true)
+            + widgets::button_width(ui, hide_label, Kind::Secondary, true)
+            + gap * 2.0;
+        // Schmales Fenster: die Schaltflächen rücken in eine eigene Zeile.
+        let stacked = ui.available_width() < buttons_width + 280.0;
+        ui.horizontal(|ui| {
+            widgets::spinner(ui, 18.0, ACCENT);
+            let reserved = if stacked { 0.0 } else { buttons_width };
+            status_line(ui, (ui.available_width() - reserved).max(80.0));
+            if !stacked {
+                ui.with_layout(Layout::right_to_left(Align::Center), &mut buttons);
+            }
         });
+        if stacked {
+            ui.horizontal(|ui| ui.with_layout(Layout::right_to_left(Align::Center), &mut buttons));
+        }
+        if cancel {
+            running.cancel.store(true, Ordering::Relaxed);
+        }
+        if hide {
+            self.hide_to_tray();
+        }
         let fraction = match self.progress {
             Some((done, total)) if total > 0 => Some((done as f64 / total as f64).clamp(0.0, 1.0) as f32),
             _ => None,
@@ -5046,7 +5194,10 @@ impl App {
                     .inner_margin(Margin::same(20)),
             )
             .show(&self.ctx, |ui| {
-                ui.set_width(660.0);
+                // In kleinen Fenstern schrumpft der Dialog mit.
+                let window = self.ctx.content_rect();
+                ui.set_width((window.width() - 72.0).clamp(280.0, 660.0));
+                let list_height = (window.height() - 290.0).clamp(140.0, 374.0);
                 ui.horizontal(|ui| {
                     widgets::inline_icon(ui, Icon::Folder, 16.0, TEXT_MUTED);
                     widgets::text(ui, t!("Dateien auswählen", "Select files"), theme::bold(16.0), TEXT_BRIGHT);
@@ -5080,7 +5231,7 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     egui::ScrollArea::vertical()
                         .id_salt(&dir)
-                        .max_height(374.0)
+                        .max_height(list_height)
                         .auto_shrink([false, false])
                         .show_rows(ui, 34.0, nodes.len(), |ui, range| {
                             for node in &nodes[range] {
@@ -5160,7 +5311,9 @@ impl App {
                     .inner_margin(Margin::same(20)),
             )
             .show(&self.ctx, |ui| {
-                ui.set_width(620.0);
+                let window = self.ctx.content_rect();
+                ui.set_width((window.width() - 72.0).clamp(280.0, 620.0));
+                let list_height = (window.height() - 250.0).clamp(140.0, 380.0);
                 ui.horizontal(|ui| {
                     widgets::inline_icon(ui, Icon::Drive, 16.0, TEXT_MUTED);
                     widgets::text(ui, t!("Sicherungen auf deinen Zielen", "Backups on your targets"), theme::bold(16.0), TEXT_BRIGHT);
@@ -5172,14 +5325,14 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Neueste zuerst. Sicherungen auf einer Nextcloud werden vor dem Öffnen heruntergeladen.",
-                        "Newest first. Backups on a Nextcloud are downloaded before they are opened."
+                        "Die neueste steht oben. Sicherungen aus der Cloud werden erst heruntergeladen.",
+                        "The newest is at the top. Backups from the cloud are downloaded first."
                     ),
                     theme::regular(12.5),
                     TEXT_MUTED,
                 );
                 ui.add_space(8.0);
-                egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height(list_height).show(ui, |ui| {
                     for (index, file) in files.iter().enumerate() {
                         egui::Frame::new()
                             .fill(BG)
@@ -5241,14 +5394,30 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.poll();
 
+        // Fenster schließen, während etwas läuft: nicht beenden (das bräche den Vorgang ab),
+        // sondern in den Infobereich verstecken.
+        if self.running.is_some() && ui.ctx().input(|i| i.viewport().close_requested()) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.hide_to_tray();
+        }
+        // Entwicklungs-Builds: das Verstecken ohne Mausklick auslösen (für Tests).
+        #[cfg(debug_assertions)]
+        {
+            static TRIED: AtomicBool = AtomicBool::new(false);
+            if std::env::var_os("ZEBACK_TRAY").is_some() && self.running.is_some() && self.now() > 2.0 && !TRIED.swap(true, Ordering::Relaxed) {
+                self.hide_to_tray();
+            }
+        }
+
         egui::Panel::top("topbar")
             .exact_size(TOPBAR_HEIGHT)
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(BG))
             .show(ui, |ui| self.ui_topbar(ui));
 
+        let sidebar = sidebar_width(ui.max_rect().width());
         egui::Panel::left("sidebar")
-            .exact_size(SIDEBAR_WIDTH)
+            .exact_size(sidebar)
             .resizable(false)
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(BG))

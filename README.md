@@ -61,6 +61,8 @@ meldet eine neue Version und installiert sie mit einem Klick.
 - **Nur Geändertes sichern** spart Zeit und Platz
 - Alte Sicherungen werden auf Wunsch **aufgeräumt**
 - **Berichte** per E-Mail oder Windows-Benachrichtigung, wenn etwas schiefgeht
+- Läuft **im Hintergrund** weiter: Das Fenster lässt sich während einer Sicherung neben die Uhr
+  ausblenden, ohne dass sie abbricht
 
 **Wiederherstellen**
 
@@ -77,6 +79,9 @@ ZEBack an deine Daten.
 2. **Auswählen, was gesichert wird** – dein Benutzerprofil ist schon vorgeschlagen.
 3. **Ziel angeben** – zum Beispiel einen Ordner auf einer USB-Festplatte.
 4. **Backup starten.** ZEBack zeigt, wie weit es ist, wie schnell es geht und wie lange es noch dauert.
+
+Das Fenster darf dabei klein sein: Die Oberfläche passt sich an, in schmalen Fenstern rückt alles
+in eine Spalte.
 
 Soll das künftig von selbst laufen? Im letzten Schritt **Als Auftrag speichern** wählen und unter
 **Aufträge** einen Zeitplan einstellen.

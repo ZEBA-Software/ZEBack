@@ -26,6 +26,7 @@ mod sizes;
 mod smb;
 mod sysimage;
 mod theme;
+mod tray;
 mod update;
 mod util;
 mod verify;
@@ -74,6 +75,7 @@ fn main() -> eframe::Result {
         None => {}
     }
 
+    prefer_frugal_graphics();
     const ICON_SIZE: u32 = 64;
     let icon = egui::IconData {
         rgba: logo::render_rgba(ICON_SIZE),
@@ -84,8 +86,10 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("ZEBack")
             .with_icon(icon)
-            .with_inner_size([1080.0, 800.0])
-            .with_min_inner_size([940.0, 620.0]),
+            .with_inner_size(start_size())
+            // Die Oberfläche passt sich an: schmale Fenster bekommen eine schmale Seitenleiste
+            // und eine Spalte statt zwei.
+            .with_min_inner_size([560.0, 500.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -93,6 +97,32 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
     )
+}
+
+/// Fenstergröße beim Start. Entwicklungs-Builds: `ZEBACK_SIZE=700x560` wählt eine andere
+/// (für Bildschirmfotos schmaler Fenster).
+fn start_size() -> [f32; 2] {
+    #[cfg(debug_assertions)]
+    if let Ok(size) = std::env::var("ZEBACK_SIZE")
+        && let Some((width, height)) = size.split_once('x')
+        && let (Ok(width), Ok(height)) = (width.parse(), height.parse())
+    {
+        return [width, height];
+    }
+    [1080.0, 800.0]
+}
+
+/// Die Oberfläche ist schlicht und braucht keine starke Grafikkarte. Ohne diese Vorgaben würde
+/// die Grafikbibliothek auf Notebooks die Hochleistungs-Grafikkarte aufwecken (mehr Strom,
+/// Einblendungen des Grafiktreibers) und unter Umständen über Vulkan zeichnen, wo sich Zusatz-
+/// programme der Treiber einklinken. Wer etwas anderes braucht, setzt die Variablen selbst.
+fn prefer_frugal_graphics() {
+    for (name, value) in [("WGPU_POWER_PREF", "low"), ("WGPU_BACKEND", "dx12,gl")] {
+        if std::env::var_os(name).is_none() {
+            // SAFETY: Aufruf am Anfang von `main`, bevor das Programm weitere Threads startet.
+            unsafe { std::env::set_var(name, value) };
+        }
+    }
 }
 
 #[cfg(test)]

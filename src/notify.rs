@@ -7,7 +7,7 @@ use std::time::Duration;
 const VISIBLE_FOR: Duration = Duration::from_secs(8);
 
 #[cfg(windows)]
-mod ffi {
+pub(crate) mod ffi {
     #[repr(C)]
     pub struct NotifyIconData {
         pub size: u32,
