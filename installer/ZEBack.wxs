@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  MSI-Installer für Packup (WiX Toolset 3.14).
+  MSI-Installer für ZEBack (WiX Toolset 3.14).
   Gebaut wird mit installer\build-msi.ps1; das Skript übergibt Version, Hersteller und EXE-Pfad.
   Die Architektur (x64 / arm64) kommt über "candle -arch".
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <!-- UpgradeCode NIE ändern: daran erkennt Windows bei Updates die Vorgängerversion. -->
   <Product Id="*"
-           Name="Packup"
+           Name="ZEBack"
            Language="1031"
            Codepage="1252"
            Version="$(var.Version)"
@@ -17,22 +17,22 @@
     <Package InstallerVersion="500"
              Compressed="yes"
              InstallScope="perMachine"
-             Description="Packup $(var.Version) ($(sys.BUILDARCH))"
+             Description="ZEBack $(var.Version) ($(sys.BUILDARCH))"
              Comments="Backup und Wiederherstellung: Benutzerprofile, Laufwerke, Systemabbilder" />
 
     <!-- Neuere Version ersetzt die alte automatisch; ein Downgrade wird abgelehnt. -->
-    <MajorUpgrade DowngradeErrorMessage="Es ist bereits eine neuere Version von Packup installiert." />
+    <MajorUpgrade DowngradeErrorMessage="Es ist bereits eine neuere Version von ZEBack installiert." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLFOLDER" Name="Packup" />
+        <Directory Id="INSTALLFOLDER" Name="ZEBack" />
       </Directory>
       <Directory Id="ProgramMenuFolder" />
     </Directory>
 
     <Component Id="MainExecutable" Directory="INSTALLFOLDER" Guid="*">
-      <File Id="PackupExe" Name="Packup.exe" Source="$(var.ExePath)" KeyPath="yes" />
+      <File Id="ZEBackExe" Name="ZEBack.exe" Source="$(var.ExePath)" KeyPath="yes" />
     </Component>
 
     <!--
@@ -41,26 +41,26 @@
     -->
     <Component Id="StartMenuEntry" Directory="ProgramMenuFolder" Guid="*">
       <Shortcut Id="StartMenuShortcut"
-                Name="Packup"
+                Name="ZEBack"
                 Description="Profile, Laufwerke und das System sichern und wiederherstellen"
-                Target="[INSTALLFOLDER]Packup.exe"
+                Target="[INSTALLFOLDER]ZEBack.exe"
                 WorkingDirectory="INSTALLFOLDER" />
       <RegistryValue Root="HKCU"
-                     Key="Software\Packup"
+                     Key="Software\ZEBack"
                      Name="StartMenuShortcut"
                      Type="integer"
                      Value="1"
                      KeyPath="yes" />
     </Component>
 
-    <Feature Id="Main" Title="Packup" Level="1">
+    <Feature Id="Main" Title="ZEBack" Level="1">
       <ComponentRef Id="MainExecutable" />
       <ComponentRef Id="StartMenuEntry" />
     </Feature>
 
     <!-- Symbol in der Liste der installierten Apps -->
-    <Icon Id="Packup.ico" SourceFile="$(var.IconPath)" />
-    <Property Id="ARPPRODUCTICON" Value="Packup.ico" />
+    <Icon Id="ZEBack.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="ZEBack.ico" />
 
     <!-- Unter "Apps" nur Deinstallieren anbieten (kein Ändern/Reparieren-Dialog). -->
     <Property Id="ARPURLINFOABOUT" Value="https://zeba.xyz" />

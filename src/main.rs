@@ -62,6 +62,8 @@ fn main() -> eframe::Result {
             Err(()) => 1,
         });
     }
+    // Erster Start unter neuem Namen: Einstellungen, Verlauf und Stände des Vorgängers übernehmen.
+    config::Config::adopt_previous();
     i18n::apply(config::Config::load().language);
     match job_to_run(&args) {
         Some(Ok(id)) => std::process::exit(jobs::run_headless(id)),
@@ -80,14 +82,14 @@ fn main() -> eframe::Result {
     };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Packup")
+            .with_title("ZEBack")
             .with_icon(icon)
             .with_inner_size([1080.0, 800.0])
             .with_min_inner_size([940.0, 620.0]),
         ..Default::default()
     };
     eframe::run_native(
-        "Packup",
+        "ZEBack",
         options,
         Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
     )

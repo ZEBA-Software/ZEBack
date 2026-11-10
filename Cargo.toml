@@ -1,13 +1,13 @@
 [package]
-name = "packup"
-version = "0.14.0"
+name = "zeback"
+version = "0.15.0"
 edition = "2024"
 authors = ["ZEBA Software UG"]
 homepage = "https://zeba.xyz"
 description = "Backup- und Wiederherstellungstool für Windows: Benutzerprofile, Laufwerke und Systemabbilder"
 
 [[bin]]
-name = "Packup"
+name = "ZEBack"
 path = "src/main.rs"
 
 [dependencies]

@@ -57,7 +57,7 @@ fn message(from: &str, to: &[String], subject: &str, body: &str) -> String {
     let host = from.rsplit('@').next().unwrap_or("localhost");
     let id = format!("{}.{}@{host}", Local::now().timestamp_micros(), std::process::id());
     let mut text = format!(
-        "From: Packup <{from}>\r\nTo: {}\r\nSubject: =?UTF-8?B?{}?=\r\nDate: {}\r\nMessage-ID: <{id}>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n",
+        "From: ZEBack <{from}>\r\nTo: {}\r\nSubject: =?UTF-8?B?{}?=\r\nDate: {}\r\nMessage-ID: <{id}>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n",
         to.join(", "),
         b64(&subject),
         Local::now().to_rfc2822(),
@@ -141,7 +141,7 @@ impl<S: Read + Write> Session<S> {
     fn hello(&mut self) -> Result<String> {
         let name = std::env::var("COMPUTERNAME").unwrap_or_default();
         let name: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-        self.command(&format!("EHLO {}", if name.is_empty() { "packup" } else { name.as_str() }), 250, t!("Begrüßung", "Greeting"))
+        self.command(&format!("EHLO {}", if name.is_empty() { "zeback" } else { name.as_str() }), 250, t!("Begrüßung", "Greeting"))
     }
 
     /// Anmelden, Absender und Empfänger nennen, Nachricht übergeben.
@@ -304,7 +304,7 @@ mod tests {
         session.greeting().unwrap();
         let capabilities = session.hello().unwrap();
         let to = recipients(&mail.to).unwrap();
-        let text = message("berichte@example.de", &to, "Packup: Sicherung „Büro“ gelungen", "Alles in Ordnung.\nGrüße");
+        let text = message("berichte@example.de", &to, "ZEBack: Sicherung „Büro“ gelungen", "Alles in Ordnung.\nGrüße");
         session.deliver(&mail, &capabilities, &to, &text).unwrap();
         let seen = server.join().unwrap();
 
@@ -313,7 +313,7 @@ mod tests {
         assert!(seen.contains(&"MAIL FROM:<berichte@example.de>".to_string()));
         assert!(seen.contains(&"RCPT TO:<anna@example.de>".to_string()) && seen.contains(&"RCPT TO:<it@example.de>".to_string()));
         let subject = seen.iter().find_map(|l| l.strip_prefix("Subject: =?UTF-8?B?")).unwrap().trim_end_matches("?=");
-        assert_eq!(decode(subject), "Packup: Sicherung „Büro“ gelungen");
+        assert_eq!(decode(subject), "ZEBack: Sicherung „Büro“ gelungen");
         // Der Text steht hinter der Leerzeile, bis zum abschließenden Punkt.
         let blank = seen.iter().position(String::is_empty).unwrap();
         let end = seen.iter().position(|l| l == ".").unwrap();

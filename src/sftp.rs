@@ -1,6 +1,6 @@
 //! SFTP-Ziele über den OpenSSH-Client, der zu Windows gehört (`System32\OpenSSH\sftp.exe`).
 //! Jede Aktion läuft als eigene, kurze Sitzung mit einer Befehlsdatei. Ein Passwort fragt
-//! OpenSSH über ein Hilfsprogramm ab – das ist Packup selbst (siehe [`answer_askpass`]).
+//! OpenSSH über ein Hilfsprogramm ab – das ist ZEBack selbst (siehe [`answer_askpass`]).
 
 use std::fs;
 use std::io::Read;
@@ -16,8 +16,8 @@ use crate::nextcloud::RemoteFile;
 use crate::remote::Remote;
 use crate::util::TempFile;
 
-/// Umgebungsvariable, über die Packup dem von OpenSSH gestarteten Hilfsprogramm das Passwort reicht.
-const SECRET_VAR: &str = "PACKUP_ASKPASS_SECRET";
+/// Umgebungsvariable, über die ZEBack dem von OpenSSH gestarteten Hilfsprogramm das Passwort reicht.
+const SECRET_VAR: &str = "ZEBACK_ASKPASS_SECRET";
 
 #[derive(Clone)]
 pub struct SftpSettings {
@@ -48,7 +48,7 @@ pub struct SftpClient {
     dir: String,
 }
 
-/// Wird Packup von OpenSSH als Hilfsprogramm für die Passwortabfrage gestartet, steht das
+/// Wird ZEBack von OpenSSH als Hilfsprogramm für die Passwortabfrage gestartet, steht das
 /// Passwort in der Umgebung. Dann gibt diese Funktion die Antwort zurück, und das Programm
 /// soll sie ausgeben und sich beenden. Beantwortet werden nur Fragen nach Passwort oder
 /// Kennwort – nie die Rückfrage, ob einem unbekannten Server vertraut werden soll.
@@ -299,7 +299,7 @@ impl SftpClient {
     /// fünfmal pro Sekunde aufgerufen (für Fortschritt), `rep` erlaubt den Abbruch.
     fn run(&self, batch: &str, rep: Option<&Reporter>, tick: &mut dyn FnMut()) -> Result<String> {
         let batch_file = TempFile::new(std::env::temp_dir().join(format!(
-            "packup-sftp-{}-{}.txt",
+            "zeback-sftp-{}-{}.txt",
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default()
         )));
@@ -318,7 +318,7 @@ impl SftpClient {
             // OpenSSH fragt das Passwort über dieses Programm ab statt an einer Konsole.
             .env("SSH_ASKPASS", std::env::current_exe().context(t!("Programmpfad nicht ermittelbar", "Could not determine the program path"))?)
             .env("SSH_ASKPASS_REQUIRE", "force")
-            .env("DISPLAY", "packup")
+            .env("DISPLAY", "zeback")
             .env(SECRET_VAR, &self.password);
         #[cfg(windows)]
         {

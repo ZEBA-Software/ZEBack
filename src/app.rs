@@ -323,8 +323,8 @@ fn profile_rows(ui: &mut Ui, profiles: &[Profile], selected: &mut usize) -> bool
         warning_line(
             ui,
             t!(
-                "Für fremde Profile Packup als Administrator starten (Rechtsklick → „Als Administrator ausführen“).",
-                "For other users' profiles, start Packup as administrator (right-click → “Run as administrator”)."
+                "Für fremde Profile ZEBack als Administrator starten (Rechtsklick → „Als Administrator ausführen“).",
+                "For other users' profiles, start ZEBack as administrator (right-click → “Run as administrator”)."
             ),
         );
     }
@@ -447,7 +447,7 @@ impl App {
         // um die Oberfläche ohne Mausklicks prüfen zu können.
         #[cfg(debug_assertions)]
         {
-            match std::env::var("PACKUP_TAB").as_deref() {
+            match std::env::var("ZEBACK_TAB").as_deref() {
                 Ok("restore") => app.tab = Tab::Restore,
                 Ok("targets") => app.tab = Tab::Targets,
                 Ok("jobs") => app.tab = Tab::Jobs,
@@ -455,24 +455,24 @@ impl App {
                 Ok("log") => app.tab = Tab::Log,
                 _ => {}
             }
-            if let Some(step) = std::env::var("PACKUP_STEP").ok().and_then(|s| s.parse::<usize>().ok()) {
+            if let Some(step) = std::env::var("ZEBACK_STEP").ok().and_then(|s| s.parse::<usize>().ok()) {
                 app.backup_step = step.min(LAST_STEP);
                 app.restore_step = step.min(LAST_STEP);
             }
-            if let Ok(password) = std::env::var("PACKUP_PASSWORD") {
+            if let Ok(password) = std::env::var("ZEBACK_PASSWORD") {
                 app.cfg.encrypt = true;
                 app.backup_password = password.clone();
                 app.backup_password_repeat = password.clone();
                 app.restore_password = password;
             }
-            if let Some(dir) = std::env::var_os("PACKUP_ONLY") {
+            if let Some(dir) = std::env::var_os("ZEBACK_ONLY") {
                 // Nur diesen einen Ordner sichern (für Testläufe mit Beispieldaten).
                 app.std_rows.iter_mut().for_each(|r| r.checked = false);
                 app.opt_rows.iter_mut().for_each(|r| r.checked = false);
                 app.cfg.extra_folders = vec![ExtraFolder { path: dir.into(), enabled: true }];
                 app.request_sizes();
             }
-            if let Ok(dir) = std::env::var("PACKUP_LOCAL_DIR") {
+            if let Ok(dir) = std::env::var("ZEBACK_LOCAL_DIR") {
                 // Nur dieses eine Ziel verwenden.
                 app.cfg.targets.iter_mut().for_each(|t| t.selected = false);
                 let id = app.cfg.next_target_id();
@@ -485,7 +485,7 @@ impl App {
                     ..Target::default()
                 });
             }
-            if let Ok(edit) = std::env::var("PACKUP_DEMO_TARGETS") {
+            if let Ok(edit) = std::env::var("ZEBACK_DEMO_TARGETS") {
                 // Beispielziele für Bildschirmfotos der Seite "Sicherungsziele".
                 app.cfg.targets.clear();
                 for (index, (name, kind, path, url, user)) in [
@@ -511,30 +511,46 @@ impl App {
                 }
                 app.target_edit = edit.parse().unwrap_or(2);
             }
-            if let Some(index) = std::env::var("PACKUP_EDIT").ok().and_then(|s| s.parse::<usize>().ok()) {
+            if let Some(index) = std::env::var("ZEBACK_EDIT").ok().and_then(|s| s.parse::<usize>().ok()) {
                 // Dieses Ziel bzw. diesen Auftrag auf der jeweiligen Seite zum Bearbeiten öffnen.
                 app.target_edit = index;
                 app.job_edit = index;
             }
-            if std::env::var_os("PACKUP_SEARCH").is_some() {
+            if std::env::var_os("ZEBACK_SEARCH").is_some() {
                 // Sofort auf den Sicherungszielen suchen (für Bildschirmfotos des Dialogs).
                 app.tab = Tab::Restore;
                 app.start_backup_search();
             }
-            if let Some(path) = std::env::var_os("PACKUP_OPEN") {
+            if let Some(path) = std::env::var_os("ZEBACK_OPEN") {
                 app.open_archive(path.into());
             }
-            if std::env::var_os("PACKUP_AUTORUN").is_some() {
+            if std::env::var_os("ZEBACK_AUTORUN").is_some() {
                 app.backup_step = LAST_STEP;
                 app.start_backup();
             }
-            if let Ok(version) = std::env::var("PACKUP_UPDATE") {
+            if let Ok(version) = std::env::var("ZEBACK_UPDATE") {
                 // So tun, als läge diese Version bereit (für Bildschirmfotos des Hinweises).
                 app.update = Some(Release {
                     version,
                     url: crate::update::DOWNLOAD_URL.to_string(),
                     notes: "Schnellere Sicherungen und kleinere Korrekturen.".to_string(),
                 });
+            }
+        }
+        // Zeitpläne, die noch unter dem früheren Programmnamen eingetragen sind, umziehen.
+        if !app.no_save()
+            && app.cfg.jobs.iter().any(|job| job.schedule != ScheduleKind::Off)
+            && let Ok(exe) = std::env::current_exe()
+        {
+            let moved = schedule::adopt_previous(&exe, &app.cfg.jobs);
+            if moved > 0 {
+                app.push_log(
+                    false,
+                    tr!(
+                        "{moved} Zeitplan/Zeitpläne vom früheren Programmnamen übernommen.",
+                        "Took over {moved} schedule(s) from the previous program name."
+                    ),
+                );
             }
         }
         // Beim Start nach einer neueren Version fragen – nicht bei Testläufen der Entwicklung.
@@ -807,7 +823,7 @@ impl App {
                 }
                 Ok(None) if manual => self.set_result(
                     Level::Ok,
-                    tr!("Packup ist aktuell\nVersion {} ist die neueste.", "Packup is up to date\nVersion {} is the latest.", env!("CARGO_PKG_VERSION")),
+                    tr!("ZEBack ist aktuell\nVersion {} ist die neueste.", "ZEBack is up to date\nVersion {} is the latest.", env!("CARGO_PKG_VERSION")),
                 ),
                 Err(e) if manual => self.fail(tr!("Update-Abfrage nicht möglich\n{e}", "Could not check for updates\n{e}")),
                 // Eine stille Abfrage beim Start meldet nichts, wenn sie scheitert oder nichts findet.
@@ -958,7 +974,7 @@ impl App {
                 let new_key = target.password_key();
                 self.target_passwords.insert(target_id, login.app_password);
                 #[cfg(debug_assertions)]
-                let keep_stored = std::env::var_os("PACKUP_NO_SAVE").is_some();
+                let keep_stored = std::env::var_os("ZEBACK_NO_SAVE").is_some();
                 #[cfg(not(debug_assertions))]
                 let keep_stored = false;
                 if !keep_stored && old_key != new_key && let Some(key) = old_key {
@@ -1007,12 +1023,12 @@ impl App {
                 self.browse_dir = Some(String::new());
                 // Entwicklungs-Builds: Ordner und Auswahl für Bildschirmfotos vorgeben.
                 #[cfg(debug_assertions)]
-                if let Ok(dir) = std::env::var("PACKUP_BROWSE") {
+                if let Ok(dir) = std::env::var("ZEBACK_BROWSE") {
                     self.browse_dir = Some(dir);
-                    let picks = std::env::var("PACKUP_PICK").unwrap_or_default();
+                    let picks = std::env::var("ZEBACK_PICK").unwrap_or_default();
                     self.picked.extend(picks.split(';').filter(|p| !p.is_empty()).map(str::to_string));
                     // … und auf Wunsch die Auswahl gleich in einen Ordner wiederherstellen.
-                    if let Ok(dir) = std::env::var("PACKUP_RESTORE_TO") {
+                    if let Ok(dir) = std::env::var("ZEBACK_RESTORE_TO") {
                         self.browse_dir = None;
                         self.restore_mode = RestoreMode::Folder;
                         self.restore_dir = dir;
@@ -1042,7 +1058,7 @@ impl App {
                 self.archive = Some(info);
                 self.switch_tab(Tab::Restore);
                 #[cfg(debug_assertions)]
-                if std::env::var_os("PACKUP_BROWSE").is_some() {
+                if std::env::var_os("ZEBACK_BROWSE").is_some() {
                     self.start_browse();
                 }
                 (Level::Ok, text)
@@ -1055,7 +1071,7 @@ impl App {
     fn persist(&mut self) {
         // Testläufe in Entwicklungs-Builds sollen die echten Einstellungen nicht überschreiben.
         #[cfg(debug_assertions)]
-        if std::env::var_os("PACKUP_NO_SAVE").is_some() {
+        if std::env::var_os("ZEBACK_NO_SAVE").is_some() {
             return;
         }
         // Nur Ordner merken, die im aktuell gewählten Profil sichtbar sind; den Rest beibehalten.
@@ -1084,7 +1100,7 @@ impl App {
     /// (oder entfernt sie, wenn "Passwort merken" aus ist).
     fn persist_target_passwords(&mut self) {
         #[cfg(debug_assertions)]
-        if std::env::var_os("PACKUP_NO_SAVE").is_some() {
+        if std::env::var_os("ZEBACK_NO_SAVE").is_some() {
             return;
         }
         let mut problems = Vec::new();
@@ -1173,7 +1189,7 @@ impl App {
 
     /// Entwicklungs-Builds: Bei Testläufen nichts dauerhaft speichern.
     fn no_save(&self) -> bool {
-        cfg!(debug_assertions) && std::env::var_os("PACKUP_NO_SAVE").is_some()
+        cfg!(debug_assertions) && std::env::var_os("ZEBACK_NO_SAVE").is_some()
     }
 
     /// Führt den Auftrag an der Position `index` jetzt aus.
@@ -1222,8 +1238,8 @@ impl App {
                 t!("Testnachricht", "Test message"),
                 true,
                 t!(
-                    "Wenn du das liest, funktioniert der E-Mail-Bericht von Packup.",
-                    "If you are reading this, Packup's email report is working."
+                    "Wenn du das liest, funktioniert der E-Mail-Bericht von ZEBack.",
+                    "If you are reading this, ZEBack's email report is working."
                 ),
                 &[],
             );
@@ -1434,8 +1450,8 @@ impl App {
         match self.profiles.get(self.backup_profile) {
             Some(profile) if profile.accessible => Ok(profile),
             Some(profile) => Err(tr!(
-                "Kein Zugriff auf das Profil „{}“\nStarte Packup als Administrator, um fremde Profile zu sichern.",
-                "No access to the profile “{}”\nStart Packup as administrator to back up other users' profiles.",
+                "Kein Zugriff auf das Profil „{}“\nStarte ZEBack als Administrator, um fremde Profile zu sichern.",
+                "No access to the profile “{}”\nStart ZEBack as administrator to back up other users' profiles.",
                 profile.name
             )),
             None => Err(t!("Kein Profil ausgewählt", "No profile selected").to_string()),
@@ -1621,7 +1637,7 @@ impl App {
         self.progress_percent = true;
     }
 
-    /// Startet Packup mit Administratorrechten neu und schließt dieses Fenster.
+    /// Startet ZEBack mit Administratorrechten neu und schließt dieses Fenster.
     fn restart_as_admin(&mut self) {
         let mode = match self.backup_mode {
             BackupMode::Profile => "profile",
@@ -1753,8 +1769,8 @@ impl App {
                 Some(profile) if profile.accessible => {}
                 Some(profile) => {
                     return Err(tr!(
-                        "Kein Zugriff auf das Profil „{}“\nStarte Packup als Administrator, um in fremde Profile zu schreiben.",
-                        "No access to the profile “{}”\nStart Packup as administrator to write to other users' profiles.",
+                        "Kein Zugriff auf das Profil „{}“\nStarte ZEBack als Administrator, um in fremde Profile zu schreiben.",
+                        "No access to the profile “{}”\nStart ZEBack as administrator to write to other users' profiles.",
                         profile.name
                     ));
                 }
@@ -1916,7 +1932,7 @@ impl App {
         painter.text(
             pos2(logo_rect.right() + 10.0, rect.center().y),
             Align2::LEFT_CENTER,
-            "Packup",
+            "ZEBack",
             theme::bold(15.0),
             TEXT_BRIGHT,
         );
@@ -2452,7 +2468,7 @@ impl App {
                     if self.elevated {
                         widgets::kv_row(ui, t!("Administratorrechte", "Administrator rights"), t!("vorhanden", "available"));
                     } else {
-                        warning_line(ui, t!("Dafür braucht Packup Administratorrechte.", "Packup needs administrator rights for this."));
+                        warning_line(ui, t!("Dafür braucht ZEBack Administratorrechte.", "ZEBack needs administrator rights for this."));
                         admin = widgets::button(
                             ui,
                             t!("Als Administrator neu starten", "Restart as administrator"),
@@ -2828,8 +2844,8 @@ impl App {
                 Icon::Restore,
                 t!("Systemabbild zurückspielen", "Restoring a system image"),
                 t!(
-                    "Geht nur außerhalb des laufenden Windows, nicht aus Packup heraus",
-                    "Only works outside the running Windows, not from within Packup"
+                    "Geht nur außerhalb des laufenden Windows, nicht aus ZEBack heraus",
+                    "Only works outside the running Windows, not from within ZEBack"
                 ),
                 None,
             );
@@ -3260,8 +3276,8 @@ impl App {
                 widgets::text(
                     ui,
                     t!(
-                        "Verschlüsselt werden die Dateiinhalte; Datei- und Ordnernamen bleiben in der ZIP-Datei lesbar. Außerhalb von Packup lässt sich die Sicherung z. B. mit 7-Zip öffnen; ältere Windows-Versionen können das nicht von sich aus.",
-                        "The file contents are encrypted; file and folder names remain readable in the ZIP file. Outside Packup the backup can be opened with 7-Zip, for example; older Windows versions cannot do this on their own."
+                        "Verschlüsselt werden die Dateiinhalte; Datei- und Ordnernamen bleiben in der ZIP-Datei lesbar. Außerhalb von ZEBack lässt sich die Sicherung z. B. mit 7-Zip öffnen; ältere Windows-Versionen können das nicht von sich aus.",
+                        "The file contents are encrypted; file and folder names remain readable in the ZIP file. Outside ZEBack the backup can be opened with 7-Zip, for example; older Windows versions cannot do this on their own."
                     ),
                     theme::regular(12.0),
                     TEXT_MUTED,
@@ -3305,8 +3321,8 @@ impl App {
                     0,
                     t!("Welche Sicherung soll wiederhergestellt werden?", "Which backup do you want to restore?"),
                     t!(
-                        "Öffne eine ZIP-Datei oder lass Packup auf deinen Sicherungszielen suchen.",
-                        "Open a ZIP file or let Packup search your backup targets."
+                        "Öffne eine ZIP-Datei oder lass ZEBack auf deinen Sicherungszielen suchen.",
+                        "Open a ZIP file or let ZEBack search your backup targets."
                     ),
                 );
                 self.ui_restore_pick(ui);
@@ -3349,8 +3365,8 @@ impl App {
                         widgets::text(
                             ui,
                             t!(
-                                "Diese ZIP-Datei stammt nicht von Packup. Ohne Einzelauswahl wird sie vollständig entpackt.",
-                                "This ZIP file was not created by Packup. Unless you pick individual files, it is extracted completely."
+                                "Diese ZIP-Datei stammt nicht von ZEBack. Ohne Einzelauswahl wird sie vollständig entpackt.",
+                                "This ZIP file was not created by ZEBack. Unless you pick individual files, it is extracted completely."
                             ),
                             theme::regular(13.0),
                             TEXT,
@@ -3459,7 +3475,7 @@ impl App {
                 widgets::kv_row(ui, t!("Computer", "Computer"), &manifest.computer);
                 widgets::kv_row(ui, t!("Ordner", "Folders"), &manifest.roots.len().to_string());
             } else {
-                widgets::kv_row(ui, t!("Herkunft", "Origin"), t!("nicht von Packup", "not from Packup"));
+                widgets::kv_row(ui, t!("Herkunft", "Origin"), t!("nicht von ZEBack", "not from ZEBack"));
             }
             widgets::kv_row(ui, t!("ZIP-Größe", "ZIP size"), &fmt_bytes(info.size));
             widgets::kv_row(ui, t!("Entpackt", "Extracted"), &fmt_bytes(info.total_bytes));
@@ -4119,7 +4135,7 @@ impl App {
         }
         self.target_edit = index.min(self.cfg.targets.len().saturating_sub(1));
         #[cfg(debug_assertions)]
-        let keep_stored = std::env::var_os("PACKUP_NO_SAVE").is_some();
+        let keep_stored = std::env::var_os("ZEBACK_NO_SAVE").is_some();
         #[cfg(not(debug_assertions))]
         let keep_stored = false;
         if !keep_stored && let Some(key) = target.password_key() {
@@ -4556,7 +4572,7 @@ impl App {
                         }
                         None => widgets::kv_row(ui, t!("Letzter Lauf", "Last run"), t!("noch keiner", "none yet")),
                     }
-                    widgets::kv_row(ui, t!("Für Skripte", "For scripts"), &format!("Packup.exe --run-job {id}"));
+                    widgets::kv_row(ui, t!("Für Skripte", "For scripts"), &format!("ZEBack.exe --run-job {id}"));
                 });
 
                 ui.add_space(10.0);
@@ -4614,8 +4630,8 @@ impl App {
                     "Choose “Security” on the left and scroll to “Devices & sessions”."
                 ),
                 t!(
-                    "Als Namen „Packup“ eintragen, „Neues App-Passwort erstellen“ klicken.",
-                    "Enter “Packup” as the name and click “Create new app password”."
+                    "Als Namen „ZEBack“ eintragen, „Neues App-Passwort erstellen“ klicken.",
+                    "Enter “ZEBack” as the name and click “Create new app password”."
                 ),
                 t!(
                     "Das angezeigte Passwort links bei „App-Passwort“ einfügen.",

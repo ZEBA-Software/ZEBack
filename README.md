@@ -1,4 +1,4 @@
-# Packup
+# ZEBack
 
 Backup- und Wiederherstellungsprogramm für Windows, geschrieben in Rust.
 Ein Produkt der ZEBA Software UG.
@@ -35,7 +35,7 @@ Die Oberfläche gibt es auf Deutsch und Englisch.
 
 - Berichte per Windows-Benachrichtigung und E-Mail
 - Update-Hinweis
-- Aufträge ohne Fenster starten: `Packup.exe --run-job <Nummer>`
+- Aufträge ohne Fenster starten: `ZEBack.exe --run-job <Nummer>`
 
 Passwörter liegen ausschließlich in der Windows-Anmeldeinformationsverwaltung, nie in einer Datei.
 
@@ -49,7 +49,7 @@ cargo build --release --target x86_64-pc-windows-msvc
 cargo build --release --target aarch64-pc-windows-msvc
 ```
 
-Die fertige Datei liegt danach unter `target\<Ziel>\release\Packup.exe`. Sie braucht keine
+Die fertige Datei liegt danach unter `target\<Ziel>\release\ZEBack.exe`. Sie braucht keine
 weiteren Dateien.
 
 ### Tests
@@ -83,7 +83,7 @@ nur die Installer aus den vorhandenen EXE-Dateien erzeugt. Die Versionsnummer ko
 | `src/sysimage.rs` | Systemabbild über `wbadmin` |
 | `src/nextcloud.rs`, `src/s3.rs`, `src/sftp.rs`, `src/smb.rs`, `src/remote.rs` | Sicherungsziele im Netz |
 | `src/mail.rs`, `src/notify.rs`, `src/update.rs` | Berichte und Update-Hinweis |
-| `src/config.rs` | Einstellungen (`%APPDATA%\Packup`) |
+| `src/config.rs` | Einstellungen (`%APPDATA%\ZEBack`) |
 | `src/i18n.rs` | Sprachumschaltung; Texte stehen mit `t!` / `tr!` in beiden Sprachen an Ort und Stelle |
 | `src/theme.rs`, `src/widgets.rs`, `src/logo.rs` | Aussehen, Bedienelemente, Logo |
 | `installer/` | WiX-Quelle und Bauskript für die MSI |

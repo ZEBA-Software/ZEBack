@@ -680,7 +680,7 @@ mod tests {
         let mut client = S3Client::connect(&settings).unwrap();
         client.part_size = 1000;
         let (rep, _rx, _cancel) = Reporter::new(|| {});
-        let dir = std::env::temp_dir().join(format!("packup-test-s3-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("zeback-test-s3-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 

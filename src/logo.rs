@@ -1,4 +1,4 @@
-//! Das Packup-Logo, rein rechnerisch gezeichnet: eine Person ("Profil") in einem
+//! Das ZEBack-Logo, rein rechnerisch gezeichnet: eine Person ("Profil") in einem
 //! Kreispfeil ("Sicherung") auf orangem Quadrat.
 //!
 //! Diese Datei wird auch von `build.rs` eingebunden (für das EXE-Icon) und darf deshalb

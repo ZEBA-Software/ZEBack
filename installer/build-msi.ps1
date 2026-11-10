@@ -1,4 +1,4 @@
-# Baut Packup fuer x64 und ARM64 und erzeugt daraus je eine MSI-Datei in dist\.
+# Baut ZEBack fuer x64 und ARM64 und erzeugt daraus je eine MSI-Datei in dist\.
 #
 #   .\installer\build-msi.ps1              # EXE neu bauen + MSI erzeugen
 #   .\installer\build-msi.ps1 -SkipCargo   # nur MSI aus den vorhandenen EXE-Dateien
@@ -13,8 +13,8 @@ $Manufacturer = 'ZEBA Software UG'
 
 $root = Split-Path -Parent $PSScriptRoot
 $wix = Join-Path $root 'tools\wix314'
-$wxs = Join-Path $PSScriptRoot 'Packup.wxs'
-$icon = Join-Path $root 'assets\Packup.ico'
+$wxs = Join-Path $PSScriptRoot 'ZEBack.wxs'
+$icon = Join-Path $root 'assets\ZEBack.ico'
 $dist = Join-Path $root 'dist'
 $obj = Join-Path $root 'target\wix'
 
@@ -36,7 +36,7 @@ New-Item -ItemType Directory -Force $dist, $obj | Out-Null
 
 foreach ($target in $targets) {
     $arch = $target.Arch
-    $exe = Join-Path $root "target\$($target.Triple)\release\Packup.exe"
+    $exe = Join-Path $root "target\$($target.Triple)\release\ZEBack.exe"
 
     if (-not $SkipCargo) {
         Write-Host "== cargo build ($arch) =="
@@ -45,8 +45,8 @@ foreach ($target in $targets) {
     }
     if (-not (Test-Path $exe)) { throw "EXE fehlt: $exe" }
 
-    $wixobj = Join-Path $obj "Packup-$arch.wixobj"
-    $msi = Join-Path $dist "Packup-$version-$arch.msi"
+    $wixobj = Join-Path $obj "ZEBack-$arch.wixobj"
+    $msi = Join-Path $dist "ZEBack-$version-$arch.msi"
 
     Write-Host "== MSI ($arch) =="
     & (Join-Path $wix 'candle.exe') -nologo -arch $arch "-dVersion=$version" "-dManufacturer=$Manufacturer" "-dExePath=$exe" "-dIconPath=$icon" -out $wixobj $wxs
@@ -57,11 +57,11 @@ foreach ($target in $targets) {
 
     # Die einzelne EXE zusaetzlich nach dist kopieren. Laeuft sie gerade, ist sie gesperrt:
     # Dann nur hinweisen - die MSI-Datei ist davon nicht betroffen.
-    $copy = Join-Path $dist "Packup-$arch.exe"
+    $copy = Join-Path $dist "ZEBack-$arch.exe"
     try {
         Copy-Item $exe $copy -Force -ErrorAction Stop
     } catch {
-        Write-Warning "$copy ist geoeffnet und wurde nicht ersetzt. Packup schliessen und das Skript erneut starten."
+        Write-Warning "$copy ist geoeffnet und wurde nicht ersetzt. ZEBack schliessen und das Skript erneut starten."
     }
     Write-Host "Fertig: $msi"
 }

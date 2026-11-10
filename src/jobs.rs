@@ -299,8 +299,8 @@ pub fn mail_from(settings: &config::MailSettings, password: String) -> Mail {
 pub fn report_text(job_name: &str, ok: bool, text: &str, saved: &[String]) -> (String, String) {
     let computer = std::env::var("COMPUTERNAME").unwrap_or_default();
     let subject = tr!(
-        "Packup: Sicherung „{job_name}“ {} ({computer})",
-        "Packup: backup “{job_name}” {} ({computer})",
+        "ZEBack: Sicherung „{job_name}“ {} ({computer})",
+        "ZEBack: backup “{job_name}” {} ({computer})",
         if ok { t!("gelungen", "succeeded") } else { t!("FEHLGESCHLAGEN", "FAILED") }
     );
     let mut body = tr!(
@@ -316,8 +316,8 @@ pub fn report_text(job_name: &str, ok: bool, text: &str, saved: &[String]) -> (S
         }
     }
     body.push_str(t!(
-        "\nDiese Nachricht hat Packup automatisch gesendet.\n",
-        "\nThis message was sent automatically by Packup.\n"
+        "\nDiese Nachricht hat ZEBack automatisch gesendet.\n",
+        "\nThis message was sent automatically by ZEBack.\n"
     ));
     (subject, body)
 }
@@ -491,7 +491,7 @@ pub fn load_history() -> Vec<RunRecord> {
 fn record(entry: RunRecord) {
     // Testläufe in Entwicklungs-Builds sollen den echten Verlauf nicht verändern.
     #[cfg(debug_assertions)]
-    if std::env::var_os("PACKUP_NO_SAVE").is_some() {
+    if std::env::var_os("ZEBACK_NO_SAVE").is_some() {
         return;
     }
     if cfg!(test) {
@@ -532,16 +532,16 @@ pub fn run_headless(job_id: u64) -> i32 {
             notify_failure(
                 &tr!("Auftrag {job_id}", "Job {job_id}"),
                 t!(
-                    "Diesen Auftrag gibt es nicht mehr. Bitte den Zeitplan in Packup neu speichern.",
-                    "This job no longer exists. Please save the schedule in Packup again."
+                    "Diesen Auftrag gibt es nicht mehr. Bitte den Zeitplan in ZEBack neu speichern.",
+                    "This job no longer exists. Please save the schedule in ZEBack again."
                 ),
             );
         }
         return 2;
     };
     write(&tr!(
-        "Auftrag „{}“ startet (Packup {}).",
-        "Job “{}” is starting (Packup {}).",
+        "Auftrag „{}“ startet (ZEBack {}).",
+        "Job “{}” is starting (ZEBack {}).",
         saved.name,
         env!("CARGO_PKG_VERSION")
     ));
@@ -636,10 +636,10 @@ fn notify_failure(job_name: &str, message: &str) {
         const MB_TOPMOST: u32 = 0x0004_0000;
         let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(Some(0)).collect() };
         let text = wide(&tr!(
-            "Die Sicherung „{job_name}“ ist fehlgeschlagen.\n\n{message}\n\nEinzelheiten stehen in Packup unter „Aufträge“.",
-            "The backup “{job_name}” failed.\n\n{message}\n\nYou can find the details in Packup under “Jobs”."
+            "Die Sicherung „{job_name}“ ist fehlgeschlagen.\n\n{message}\n\nEinzelheiten stehen in ZEBack unter „Aufträge“.",
+            "The backup “{job_name}” failed.\n\n{message}\n\nYou can find the details in ZEBack under “Jobs”."
         ));
-        let caption = wide("Packup");
+        let caption = wide("ZEBack");
         // SAFETY: Beide Zeichenketten sind nullterminiert und leben bis zum Ende des Aufrufs.
         unsafe { MessageBoxW(0, text.as_ptr(), caption.as_ptr(), MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST) };
     }
@@ -654,7 +654,7 @@ mod tests {
     use crate::config::Compression;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("packup-test-jobs-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("zeback-test-jobs-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

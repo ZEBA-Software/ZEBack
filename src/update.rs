@@ -8,9 +8,9 @@ use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 
 /// Hier liegt die Angabe zur neuesten Version, als kleine JSON-Datei:
-/// `{ "version": "1.2.3", "url": "https://zeba.xyz/packup", "notes": "Was neu ist" }`
+/// `{ "version": "1.2.3", "url": "https://zeba.xyz/zeback", "notes": "Was neu ist" }`
 /// (`url` und `notes` dürfen fehlen).
-pub const VERSION_URL: &str = "https://zeba.xyz/packup/version.json";
+pub const VERSION_URL: &str = "https://zeba.xyz/zeback/version.json";
 /// Seite, die geöffnet wird, wenn die Angabe keinen eigenen Link enthält.
 pub const DOWNLOAD_URL: &str = "https://zeba.xyz";
 /// Nur Links auf diese Website werden aus der Angabe übernommen.
@@ -77,7 +77,7 @@ fn check_at(url: &str, current: &str) -> Result<Option<Release>> {
         .tls_config(TlsConfig::builder().provider(TlsProvider::NativeTls).root_certs(RootCerts::PlatformVerifier).build())
         .http_status_as_error(false)
         .timeout_global(Some(Duration::from_secs(15)))
-        .user_agent(concat!("Packup/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("ZEBack/", env!("CARGO_PKG_VERSION")))
         .build()
         .into();
     let mut response = agent
@@ -124,13 +124,13 @@ mod tests {
 
     #[test]
     fn reads_the_version_file() {
-        let newer = parse(r#"{"version":"v2.0.0","url":"https://zeba.xyz/packup/download","notes":"Neu: alles.\nZweite Zeile"}"#, "1.9.0").unwrap().unwrap();
-        assert_eq!((newer.version.as_str(), newer.url.as_str()), ("2.0.0", "https://zeba.xyz/packup/download"));
+        let newer = parse(r#"{"version":"v2.0.0","url":"https://zeba.xyz/zeback/download","notes":"Neu: alles.\nZweite Zeile"}"#, "1.9.0").unwrap().unwrap();
+        assert_eq!((newer.version.as_str(), newer.url.as_str()), ("2.0.0", "https://zeba.xyz/zeback/download"));
         assert_eq!(newer.notes, "Neu: alles.Zweite Zeile");
         // Gleich alt oder älter: kein Hinweis.
         assert_eq!(parse(r#"{"version":"1.9.0"}"#, "1.9.0").unwrap(), None);
         // Links auf fremde Seiten werden nicht übernommen.
-        for url in ["https://example.com/packup.exe", "http://zeba.xyz/x", "https://zeba.xyz.evil.example/x", "file:///C:/x.exe"] {
+        for url in ["https://example.com/zeback.exe", "http://zeba.xyz/x", "https://zeba.xyz.evil.example/x", "file:///C:/x.exe"] {
             let release = parse(&format!(r#"{{"version":"9.0","url":"{url}"}}"#), "1.0").unwrap().unwrap();
             assert_eq!(release.url, DOWNLOAD_URL, "{url}");
         }

@@ -1,4 +1,4 @@
-//! Einstellungen (JSON unter %APPDATA%\Packup) und Passwort-Ablage
+//! Einstellungen (JSON unter %APPDATA%\ZEBack) und Passwort-Ablage
 //! in der Windows-Anmeldeinformationsverwaltung.
 
 use std::fs;
@@ -7,12 +7,13 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-const APP_DIR: &str = "Packup";
-const KEYRING_SERVICE: &str = "Packup";
-/// Bis Version 0.4 hieß das Programm ProfileBackup. Einstellungen und gemerkte Passwörter von
-/// damals werden weiter gefunden; gespeichert wird nur noch unter dem neuen Namen.
-const LEGACY_APP_DIR: &str = "ProfileBackup";
-const LEGACY_KEYRING_SERVICE: &str = "ProfileBackup-Nextcloud";
+const APP_DIR: &str = "ZEBack";
+const KEYRING_SERVICE: &str = "ZEBack";
+/// Das Programm hieß bis Version 0.4 ProfileBackup und bis 0.14 Packup. Einstellungen und
+/// gemerkte Passwörter von damals werden weiter gefunden (neuester Name zuerst); gespeichert
+/// wird nur noch unter dem aktuellen Namen.
+const LEGACY_APP_DIRS: [&str; 2] = ["Packup", "ProfileBackup"];
+const LEGACY_KEYRING_SERVICES: [&str; 2] = ["Packup", "ProfileBackup-Nextcloud"];
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Compression {
@@ -219,7 +220,7 @@ pub fn weekdays() -> [&'static str; 7] {
 }
 
 /// Ein gespeicherter Sicherungsauftrag: was, wohin, wie oft. Er lässt sich mit einem Klick,
-/// nach Zeitplan oder über `Packup.exe --run-job <Kennung>` ausführen.
+/// nach Zeitplan oder über `ZEBack.exe --run-job <Kennung>` ausführen.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct SavedJob {
@@ -432,10 +433,10 @@ impl Default for Config {
 }
 
 /// Der Ordner, unter dem die Einstellungen liegen (`%APPDATA%`). Entwicklungs-Builds lassen
-/// sich für Testläufe über `PACKUP_DATA_DIR` auf einen anderen Ordner umlenken.
+/// sich für Testläufe über `ZEBACK_DATA_DIR` auf einen anderen Ordner umlenken.
 fn base_dir() -> Option<PathBuf> {
     #[cfg(debug_assertions)]
-    if let Some(dir) = std::env::var_os("PACKUP_DATA_DIR") {
+    if let Some(dir) = std::env::var_os("ZEBACK_DATA_DIR") {
         return Some(dir.into());
     }
     dirs::config_dir()
@@ -445,13 +446,50 @@ fn config_path() -> Option<PathBuf> {
     Some(base_dir()?.join(APP_DIR).join("config.json"))
 }
 
-fn legacy_config_path() -> Option<PathBuf> {
-    Some(base_dir()?.join(LEGACY_APP_DIR).join("config.json"))
+/// Kopiert einen Ordner samt Unterordnern.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// Übernimmt beim ersten Start unter neuem Namen den ganzen Datenordner des Vorgängers
+/// (Einstellungen, Verlauf, Protokolle, Stände der Teilsicherungen) aus `base`. Der alte Ordner
+/// bleibt liegen. Gibt es den neuen Ordner schon, passiert nichts.
+fn adopt_previous_data(base: &std::path::Path) {
+    let current = base.join(APP_DIR);
+    if current.exists() {
+        return;
+    }
+    // Nur der direkte Vorgänger kennt Verlauf und Stände; noch ältere Versionen hatten nur
+    // Einstellungen, die `load` ohnehin findet.
+    let previous = base.join(LEGACY_APP_DIRS[0]);
+    if previous.join("config.json").is_file() && copy_dir(&previous, &current).is_err() {
+        // Halb kopiert wäre schlimmer als gar nicht: dann gilt weiter der alte Ordner über `load`.
+        let _ = fs::remove_dir_all(&current);
+    }
 }
 
 impl Config {
+    /// Einmal beim Programmstart aufrufen, bevor Einstellungen gelesen werden.
+    pub fn adopt_previous() {
+        if let Some(base) = base_dir() {
+            adopt_previous_data(&base);
+        }
+    }
+
     pub fn load() -> Self {
-        let mut config = Self::read_first(&[config_path(), legacy_config_path()]);
+        let mut paths = vec![config_path()];
+        paths.extend(LEGACY_APP_DIRS.iter().map(|dir| Some(base_dir()?.join(dir).join("config.json"))));
+        let mut config = Self::read_first(&paths);
         config.migrate_legacy_targets();
         config
     }
@@ -545,8 +583,8 @@ fn keyring_entry(service: &str, key: &str) -> Result<keyring::Entry> {
 
 /// Liest ein gemerktes Passwort – auch eines, das noch unter dem alten Programmnamen liegt.
 pub fn load_password(key: &str) -> Option<String> {
-    [KEYRING_SERVICE, LEGACY_KEYRING_SERVICE]
-        .into_iter()
+    std::iter::once(KEYRING_SERVICE)
+        .chain(LEGACY_KEYRING_SERVICES)
         .find_map(|service| keyring_entry(service, key).ok()?.get_password().ok())
 }
 
@@ -559,7 +597,7 @@ pub fn save_password(key: &str, password: &str) -> Result<()> {
 /// Entfernt das Passwort unter dem neuen und dem alten Programmnamen, damit es nicht über den
 /// alten Eintrag wieder auftaucht.
 pub fn delete_password(key: &str) {
-    for service in [KEYRING_SERVICE, LEGACY_KEYRING_SERVICE] {
+    for service in std::iter::once(KEYRING_SERVICE).chain(LEGACY_KEYRING_SERVICES) {
         if let Ok(entry) = keyring_entry(service, key) {
             let _ = entry.delete_credential();
         }
@@ -602,8 +640,38 @@ mod tests {
     }
 
     #[test]
+    fn data_folder_of_the_previous_name_is_adopted_once() {
+        let base = std::env::temp_dir().join(format!("zeback-test-adopt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let old = base.join("Packup");
+        fs::create_dir_all(old.join("staende")).unwrap();
+        fs::write(old.join("config.json"), r#"{"compression":"Max"}"#).unwrap();
+        fs::write(old.join("verlauf.json"), "[]").unwrap();
+        fs::write(old.join("staende").join("auftrag-1.json"), "{}").unwrap();
+
+        adopt_previous_data(&base);
+        let new = base.join(APP_DIR);
+        assert!(new.join("config.json").is_file() && new.join("verlauf.json").is_file());
+        assert!(new.join("staende").join("auftrag-1.json").is_file());
+        // Der alte Ordner bleibt liegen.
+        assert!(old.join("config.json").is_file());
+
+        // Beim nächsten Start wird nichts mehr überschrieben.
+        fs::write(new.join("config.json"), r#"{"compression":"Fast"}"#).unwrap();
+        adopt_previous_data(&base);
+        assert!(fs::read_to_string(new.join("config.json")).unwrap().contains("Fast"));
+
+        // Ohne Vorgänger entsteht auch kein leerer Ordner.
+        let empty = base.join("leer");
+        fs::create_dir_all(&empty).unwrap();
+        adopt_previous_data(&empty);
+        assert!(!empty.join(APP_DIR).exists());
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
     fn settings_from_the_old_program_name_are_taken_over() {
-        let base = std::env::temp_dir().join(format!("packup-test-config-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("zeback-test-config-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         let (new, old) = (base.join("neu.json"), base.join("alt.json"));

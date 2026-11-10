@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn measures_folder_and_respects_excludes() {
-        let base = std::env::temp_dir().join(format!("packup-test-sizes-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("zeback-test-sizes-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("Cache")).unwrap();
         fs::create_dir_all(base.join("Unter")).unwrap();

@@ -1,5 +1,5 @@
 //! Zeitplan für Aufträge über die Windows-Aufgabenplanung. Die Aufgabe startet
-//! `Packup.exe --run-job <Kennung>` im Namen des angemeldeten Benutzers; Adminrechte braucht das nicht.
+//! `ZEBack.exe --run-job <Kennung>` im Namen des angemeldeten Benutzers; Adminrechte braucht das nicht.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -8,9 +8,9 @@ use anyhow::{Context, Result, bail};
 
 use crate::config::{SavedJob, ScheduleKind};
 
-/// Name der Aufgabe in der Aufgabenplanung (im Ordner "Packup").
+/// Name der Aufgabe in der Aufgabenplanung (im Ordner "ZEBack").
 pub fn task_name(job_id: u64) -> String {
-    format!("Packup\\Auftrag-{job_id}")
+    format!("ZEBack\\Auftrag-{job_id}")
 }
 
 fn escape_xml(text: &str) -> String {
@@ -28,8 +28,8 @@ pub fn task_xml(exe: &Path, job: &SavedJob) -> String {
         _ => "<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>".to_string(),
     };
     let description = tr!(
-        "Packup-Sicherungsauftrag „{name}“ ({when})",
-        "Packup backup job “{name}” ({when})",
+        "ZEBack-Sicherungsauftrag „{name}“ ({when})",
+        "ZEBack backup job “{name}” ({when})",
         name = escape_xml(&job.name),
         when = escape_xml(&job.schedule_text()),
     );
@@ -37,7 +37,7 @@ pub fn task_xml(exe: &Path, job: &SavedJob) -> String {
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Author>Packup</Author>
+    <Author>ZEBack</Author>
     <Description>{description}</Description>
   </RegistrationInfo>
   <Triggers>
@@ -103,7 +103,7 @@ pub fn register(exe: &Path, job: &SavedJob) -> Result<()> {
         .chain(task_xml(exe, job).encode_utf16())
         .flat_map(u16::to_le_bytes)
         .collect();
-    let file = crate::util::TempFile::new(std::env::temp_dir().join(format!("packup-aufgabe-{}-{}.xml", job.id, std::process::id())));
+    let file = crate::util::TempFile::new(std::env::temp_dir().join(format!("zeback-aufgabe-{}-{}.xml", job.id, std::process::id())));
     std::fs::write(file.path(), xml).context(t!(
         "Aufgabenbeschreibung konnte nicht geschrieben werden",
         "The task definition could not be written"
@@ -122,6 +122,11 @@ pub fn register(exe: &Path, job: &SavedJob) -> Result<()> {
 
 /// Entfernt den Zeitplan des Auftrags. Gibt es keinen, ist das kein Fehler.
 pub fn remove(job_id: u64) -> Result<()> {
+    // Eine Aufgabe unter dem früheren Programmnamen gleich mit entfernen.
+    let previous = previous_task_name(job_id);
+    if task_exists(&previous) {
+        let _ = schtasks(&["/Delete", "/TN", &previous, "/F"]);
+    }
     if !exists(job_id) {
         return Ok(());
     }
@@ -138,7 +143,36 @@ pub fn remove(job_id: u64) -> Result<()> {
 
 /// Ist für den Auftrag eine Aufgabe eingetragen?
 pub fn exists(job_id: u64) -> bool {
-    schtasks(&["/Query", "/TN", &task_name(job_id)]).is_ok_and(|output| output.status.success())
+    task_exists(&task_name(job_id))
+}
+
+fn task_exists(name: &str) -> bool {
+    schtasks(&["/Query", "/TN", name]).is_ok_and(|output| output.status.success())
+}
+
+/// Name der Aufgabe unter dem früheren Programmnamen (bis Version 0.14 hieß das Programm Packup).
+fn previous_task_name(job_id: u64) -> String {
+    format!("Packup\\Auftrag-{job_id}")
+}
+
+/// Zieht die Zeitpläne des Vorgängers um: Für jeden geplanten Auftrag, der noch eine Aufgabe
+/// unter dem alten Namen hat, wird die Aufgabe unter dem neuen Namen eingetragen (sie startet
+/// `exe`) und die alte entfernt. Rückgabe: Zahl der umgezogenen Zeitpläne.
+pub fn adopt_previous(exe: &Path, jobs: &[SavedJob]) -> usize {
+    let mut moved = 0;
+    for job in jobs.iter().filter(|job| job.schedule != ScheduleKind::Off) {
+        let previous = previous_task_name(job.id);
+        if !task_exists(&previous) {
+            continue;
+        }
+        // Erst die neue Aufgabe eintragen, dann die alte entfernen – nie umgekehrt.
+        if (exists(job.id) || register(exe, job).is_ok())
+            && schtasks(&["/Delete", "/TN", &previous, "/F"]).is_ok_and(|output| output.status.success())
+        {
+            moved += 1;
+        }
+    }
+    moved
 }
 
 #[cfg(test)]
@@ -151,18 +185,18 @@ mod tests {
 
     #[test]
     fn describes_daily_and_weekly_tasks() {
-        let exe = Path::new("C:\\Program Files\\Packup\\Packup.exe");
+        let exe = Path::new("C:\\Program Files\\ZEBack\\ZEBack.exe");
         let daily = task_xml(exe, &job(ScheduleKind::Daily));
         assert!(daily.contains("<StartBoundary>2026-01-01T07:05:00</StartBoundary>"));
         assert!(daily.contains("<DaysInterval>1</DaysInterval>"));
-        assert!(daily.contains("<Command>C:\\Program Files\\Packup\\Packup.exe</Command>"));
+        assert!(daily.contains("<Command>C:\\Program Files\\ZEBack\\ZEBack.exe</Command>"));
         assert!(daily.contains("<Arguments>--run-job 4</Arguments>"));
         // Sonderzeichen im Namen dürfen das XML nicht zerstören.
         assert!(daily.contains("Büro &lt;täglich&gt; &amp; mehr"));
 
         let weekly = task_xml(exe, &job(ScheduleKind::Weekly));
         assert!(weekly.contains("<Friday />") && weekly.contains("<WeeksInterval>1</WeeksInterval>"));
-        assert_eq!(task_name(4), "Packup\\Auftrag-4");
+        assert_eq!(task_name(4), "ZEBack\\Auftrag-4");
     }
 
     /// Trägt wirklich eine Aufgabe in die Windows-Aufgabenplanung ein und entfernt sie sofort

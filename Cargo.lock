@@ -2204,30 +2204,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "packup"
-version = "0.14.0"
-dependencies = [
- "anyhow",
- "base64",
- "chrono",
- "dirs",
- "eframe",
- "hmac",
- "keyring",
- "native-tls",
- "percent-encoding",
- "rfd",
- "roxmltree",
- "serde",
- "serde_json",
- "sha2",
- "ureq",
- "walkdir",
- "winresource",
- "zip",
-]
-
-[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3980,6 +3956,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "939f186d9ecebe044315a5cb6d6f78568bbc21152adc954d5a0c2f58bdbc9920"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "zeback"
+version = "0.15.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "chrono",
+ "dirs",
+ "eframe",
+ "hmac",
+ "keyring",
+ "native-tls",
+ "percent-encoding",
+ "rfd",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "sha2",
+ "ureq",
+ "walkdir",
+ "winresource",
+ "zip",
 ]
 
 [[package]]

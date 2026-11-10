@@ -1,4 +1,4 @@
-//! Erzeugt aus dem Logo (src/logo.rs) die Icon-Datei `assets/Packup.ico`
+//! Erzeugt aus dem Logo (src/logo.rs) die Icon-Datei `assets/ZEBack.ico`
 //! und bettet sie zusammen mit den Versionsangaben in die EXE ein.
 
 use std::fs;
@@ -7,7 +7,7 @@ use std::path::Path;
 #[path = "src/logo.rs"]
 mod logo;
 
-const ICON_PATH: &str = "assets/Packup.ico";
+const ICON_PATH: &str = "assets/ZEBack.ico";
 const SIZES: [u32; 8] = [16, 20, 24, 32, 40, 48, 64, 256];
 
 fn main() {
@@ -25,10 +25,10 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut resource = winresource::WindowsResource::new();
         resource.set_icon(ICON_PATH);
-        resource.set("ProductName", "Packup");
-        resource.set("FileDescription", "Packup");
-        resource.set("InternalName", "Packup");
-        resource.set("OriginalFilename", "Packup.exe");
+        resource.set("ProductName", "ZEBack");
+        resource.set("FileDescription", "ZEBack");
+        resource.set("InternalName", "ZEBack");
+        resource.set("OriginalFilename", "ZEBack.exe");
         resource.set("CompanyName", "ZEBA Software UG");
         resource.set("LegalCopyright", "Copyright (c) 2026 ZEBA Software UG - zeba.xyz");
         if let Err(e) = resource.compile() {

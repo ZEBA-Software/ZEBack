@@ -83,7 +83,7 @@ pub fn show_blocking(title: &str, text: &str, error: bool) -> bool {
     const IDI_APPLICATION: usize = 32512;
 
     let class: Vec<u16> = "STATIC".encode_utf16().chain(Some(0)).collect();
-    let name: Vec<u16> = "Packup".encode_utf16().chain(Some(0)).collect();
+    let name: Vec<u16> = "ZEBack".encode_utf16().chain(Some(0)).collect();
     // SAFETY: Alle Zeichenketten sind nullterminiert und leben bis zum Ende der Aufrufe; die
     // Struktur hat die von Windows erwartete Größe und Anordnung.
     unsafe {
@@ -105,7 +105,7 @@ pub fn show_blocking(title: &str, text: &str, error: bool) -> bool {
             flags: NIF_ICON | NIF_TIP | NIF_INFO,
             callback_message: 0,
             icon,
-            tip: fill("Packup"),
+            tip: fill("ZEBack"),
             state: 0,
             state_mask: 0,
             info: fill(text),
@@ -153,6 +153,6 @@ mod tests {
     #[test]
     #[ignore]
     fn shows_a_real_toast() {
-        assert!(show_blocking("Packup – Test", "So sieht die Benachrichtigung nach einem Auftrag aus.", false));
+        assert!(show_blocking("ZEBack – Test", "So sieht die Benachrichtigung nach einem Auftrag aus.", false));
     }
 }

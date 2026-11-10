@@ -194,7 +194,7 @@ pub(crate) fn new_agent() -> Agent {
         .allow_non_standard_methods(true)
         .timeout_connect(Some(Duration::from_secs(30)))
         .timeout_recv_response(Some(Duration::from_secs(900)))
-        .user_agent(concat!("Packup/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("ZEBack/", env!("CARGO_PKG_VERSION")))
         .build()
         .into()
 }
@@ -326,7 +326,7 @@ fn device_name() -> String {
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         .collect();
-    if computer.is_empty() { "Packup".to_string() } else { format!("Packup ({computer})") }
+    if computer.is_empty() { "ZEBack".to_string() } else { format!("ZEBack ({computer})") }
 }
 
 impl NcClient {
@@ -489,7 +489,7 @@ impl NcClient {
             .map(|d| d.as_nanos())
             .unwrap_or_default();
         let upload_url = format!(
-            "{}/remote.php/dav/uploads/{}/packup-{}-{}",
+            "{}/remote.php/dav/uploads/{}/zeback-{}-{}",
             self.base,
             encode(&self.user_id),
             std::process::id(),
@@ -889,7 +889,7 @@ mod tests {
     }
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("packup-test-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("zeback-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -956,7 +956,7 @@ mod tests {
         assert_eq!(*opened.lock().unwrap(), format!("{url}/login/v2/flow/abc"));
         assert_eq!(login, BrowserLogin { server: url.clone(), user: USER.into(), app_password: PASSWORD.into() });
         assert_eq!(*mock.login_polls.lock().unwrap(), 3);
-        assert!(mock.login_device.lock().unwrap().starts_with("Packup"));
+        assert!(mock.login_device.lock().unwrap().starts_with("ZEBack"));
         assert!(!format!("{login:?}").contains(PASSWORD));
 
         // Mit dem erhaltenen App-Passwort klappt die normale Anmeldung.

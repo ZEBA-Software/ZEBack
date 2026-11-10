@@ -76,7 +76,7 @@ mod ffi {
     }
 }
 
-/// Läuft Packup mit Administratorrechten?
+/// Läuft ZEBack mit Administratorrechten?
 #[cfg(windows)]
 pub fn is_elevated() -> bool {
     // SAFETY: Aufruf ohne Parameter.
@@ -109,7 +109,7 @@ fn shell_execute(_operation: &str, _file: &std::ffi::OsStr, _arguments: &str) ->
     false
 }
 
-/// Startet Packup erneut mit Administratorrechten (Windows fragt per UAC nach).
+/// Startet ZEBack erneut mit Administratorrechten (Windows fragt per UAC nach).
 /// `arguments` werden an die neue Instanz übergeben.
 pub fn relaunch_elevated(arguments: &str) -> Result<()> {
     let exe = std::env::current_exe()
@@ -495,8 +495,8 @@ pub fn run(job: &ImageJob, rep: &Reporter) -> Result<ImageSummary> {
     let started = Instant::now();
     if !is_elevated() {
         bail!(t!(
-            "Für ein Systemabbild muss Packup als Administrator laufen.",
-            "Packup must run as administrator to create a system image."
+            "Für ein Systemabbild muss ZEBack als Administrator laufen.",
+            "ZEBack must run as administrator to create a system image."
         ));
     }
     let args = build_args(job);
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn finds_existing_images_on_a_target() {
-        let base = std::env::temp_dir().join(format!("packup-test-images-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("zeback-test-images-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let newer = base.join("WindowsImageBackup").join("PC01").join("Backup 2026-11-10 120000");
         let older = base.join("WindowsImageBackup").join("PC01").join("Backup 2026-10-01 080000");
@@ -760,7 +760,7 @@ mod tests {
         assert_eq!(process_id("gibt-es-nicht-4711.exe"), None);
 
         let before = written_bytes(std::process::id()).expect("eigener Schreibzähler lesbar");
-        let file = std::env::temp_dir().join(format!("packup-test-io-{}.bin", std::process::id()));
+        let file = std::env::temp_dir().join(format!("zeback-test-io-{}.bin", std::process::id()));
         std::fs::write(&file, vec![7u8; 300_000]).unwrap();
         let after = written_bytes(std::process::id()).unwrap();
         let _ = std::fs::remove_file(file);

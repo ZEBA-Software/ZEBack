@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn finds_folders_of_other_profiles_including_onedrive() {
-        let base = std::env::temp_dir().join(format!("packup-test-profiles-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("zeback-test-profiles-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(base.join("Desktop")).unwrap();
         fs::create_dir_all(base.join("OneDrive - Firma").join("Dokumente")).unwrap();
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn offers_only_existing_optional_folders() {
-        let users = std::env::temp_dir().join(format!("packup-test-optional-{}", std::process::id()));
+        let users = std::env::temp_dir().join(format!("zeback-test-optional-{}", std::process::id()));
         let _ = fs::remove_dir_all(&users);
         let dir = users.join("anna");
         fs::create_dir_all(dir.join("Favorites")).unwrap();

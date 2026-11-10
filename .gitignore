@@ -8,7 +8,7 @@
 /tools
 
 # Wird von build.rs bei jedem Bau aus src/logo.rs erzeugt
-/assets/Packup.ico
+/assets/ZEBack.ico
 
 # Editoren und Windows
 /.vscode
