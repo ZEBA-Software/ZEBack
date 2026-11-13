@@ -44,6 +44,7 @@ new version and installs it with one click.
 **Back up**
 
 - **User profile** – desktop, documents, pictures and more, plus browsers, mail and Office templates
+- **Files and folders** – only the single files and folders you pick yourself, wherever they are
 - **Whole drive** – all files on a drive in one ZIP file
 - **System image** – a bootable image of Windows to bring back a complete PC
 - **Encrypted** with AES-256 if you want – and automatically **checked** after the backup
@@ -65,7 +66,7 @@ new version and installs it with one click.
 
 **Restore**
 
-- to your user profile or a folder of your choice
+- to your user profile, back to the old place or into a folder of your choice
 - whole folders or **single files**
 - ZEBack finds your backups on all targets by itself
 
@@ -149,7 +150,8 @@ is shown with the job.
 ## Deutsch
 
 ZEBack ist ein Programm zum Sichern und Wiederherstellen für Windows, geschrieben in Rust. Es
-sichert Benutzerprofile, ganze Laufwerke und startfähige Systemabbilder auf USB-Laufwerke,
+sichert Benutzerprofile, einzelne Dateien und Ordner, ganze Laufwerke und startfähige
+Systemabbilder auf USB-Laufwerke,
 Netzwerkfreigaben, Nextcloud, WebDAV, S3-Speicher und SFTP – mit Aufträgen nach Zeitplan,
 Teilsicherungen, AES-256-Verschlüsselung und Berichten per E-Mail. Die Oberfläche gibt es auf
 Deutsch und Englisch; sie startet auf Englisch, umschalten lässt sie sich mit **DE / EN** unten in
@@ -195,8 +197,8 @@ creates the installers from the existing EXE files.
 2. Create a tag with the same number and push it:
 
    ```powershell
-   git tag v0.18.0
-   git push origin v0.18.0
+   git tag v0.19.0
+   git push origin v0.19.0
    ```
 
 GitHub does the rest (`.github/workflows/release.yml`): it builds both architectures, creates the

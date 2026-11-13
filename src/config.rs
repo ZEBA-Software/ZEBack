@@ -69,6 +69,7 @@ impl Compression {
     }
 }
 
+/// Ein vom Benutzer hinzugefügter Ordner – bei "Dateien und Ordner" auch eine einzelne Datei.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ExtraFolder {
     pub path: PathBuf,
@@ -378,6 +379,10 @@ pub struct Config {
     /// Schlüssel der Zusatzordner (Browser, Mail, …), die der Benutzer angehakt hat.
     pub checked_optional: Vec<String>,
     pub extra_folders: Vec<ExtraFolder>,
+    /// Sicherungsart "Dateien und Ordner": die frei ausgewählten Dateien und Ordner …
+    pub file_items: Vec<ExtraFolder>,
+    /// … und der Name dieser Sicherung (steht im Dateinamen); leer = "Dateien".
+    pub files_name: String,
     /// Die eingerichteten Sicherungsziele
     pub targets: Vec<Target>,
     /// Einstellungen aus Versionen vor 0.4 (ein Ordner und ein Nextcloud-Zugang); werden beim
@@ -417,6 +422,8 @@ impl Default for Config {
             unchecked_standard: Vec::new(),
             checked_optional: Vec::new(),
             extra_folders: Vec::new(),
+            file_items: Vec::new(),
+            files_name: String::new(),
             targets: Vec::new(),
             use_local: true,
             local_dir: String::new(),

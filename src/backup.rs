@@ -32,10 +32,16 @@ const ALREADY_COMPRESSED: &[&str] = &[
     "cab", "docx", "xlsx", "pptx", "odt", "ods", "odp", "epub", "jar", "apk",
 ];
 
+/// Art (`Source::kind`) einer einzelnen Datei, die für sich gesichert wird. Im Archiv liegt sie
+/// auf der obersten Ebene, ohne Ordner darum.
+pub const KIND_FILE: &str = "file";
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Source {
+    /// Ein Ordner – oder eine einzelne Datei (`kind` ist dann [`KIND_FILE`]).
     pub path: PathBuf,
-    /// Schlüssel des Standardordners ("desktop", "documents", …) oder `None` für eigene Ordner.
+    /// Schlüssel des Standardordners ("desktop", "documents", …), "drive", "file" oder `None`
+    /// für eigene Ordner.
     pub kind: Option<String>,
     /// Name des Ordners im Archiv; `None` = Name des Quellordners.
     pub name: Option<String>,
@@ -49,6 +55,17 @@ impl Source {
     /// Quelle ohne Besonderheiten.
     pub fn plain(path: PathBuf, kind: Option<String>) -> Self {
         Self { path, kind, name: None, exclude: Vec::new(), exclude_paths: Vec::new() }
+    }
+
+    /// Ein Ordner oder eine einzelne Datei, vom Benutzer frei ausgewählt.
+    pub fn picked(path: PathBuf) -> Self {
+        let kind = path.is_file().then(|| KIND_FILE.to_string());
+        Self::plain(path, kind)
+    }
+
+    /// Wird eine einzelne Datei gesichert (kein Ordner)?
+    pub fn is_file(&self) -> bool {
+        self.kind.as_deref() == Some(KIND_FILE)
     }
 
     /// Durchläuft den Ordner, ohne Verknüpfungen zu folgen und ohne ausgeschlossene Einträge.
@@ -259,8 +276,15 @@ pub fn run(job: &BackupJob, rep: &Reporter) -> Result<BackupSummary> {
 
     let mut sources = Vec::new();
     for src in &job.sources {
-        if src.path.is_dir() {
+        // Eine einzelne Datei muss eine Datei sein, alles andere ein Ordner.
+        if src.is_file() && src.path.is_file() || !src.is_file() && src.path.is_dir() {
             sources.push(src.clone());
+        } else if src.is_file() {
+            rep.warn(tr!(
+                "Datei nicht gefunden, wird ausgelassen: {}",
+                "File not found, skipping it: {}",
+                src.path.display()
+            ));
         } else {
             rep.warn(tr!(
                 "Ordner nicht gefunden, wird ausgelassen: {}",
@@ -270,7 +294,10 @@ pub fn run(job: &BackupJob, rep: &Reporter) -> Result<BackupSummary> {
         }
     }
     if sources.is_empty() {
-        bail!(t!("Keiner der ausgewählten Ordner ist vorhanden.", "None of the selected folders exists."));
+        bail!(t!(
+            "Nichts von der Auswahl ist vorhanden.",
+            "Nothing of what you selected exists."
+        ));
     }
     if job.destinations.is_empty() {
         bail!(t!("Es ist kein Ziel ausgewählt.", "No target is selected."));
@@ -648,10 +675,15 @@ fn root_name(source: &Source, used: &mut HashSet<String>) -> String {
             let s: String = path.to_string_lossy().chars().filter(|c| c.is_alphanumeric()).collect();
             if s.is_empty() { "Ordner".into() } else { s }
         });
+    // Bei einzelnen Dateien kommt die Nummer vor die Endung: "Brief (2).docx".
+    let (stem, extension) = match base.rfind('.') {
+        Some(dot) if source.is_file() && dot > 0 => base.split_at(dot),
+        _ => (base.as_str(), ""),
+    };
     let mut name = base.clone();
     let mut n = 2;
     while !used.insert(name.to_lowercase()) {
-        name = format!("{base} ({n})");
+        name = format!("{stem} ({n}){extension}");
         n += 1;
     }
     name

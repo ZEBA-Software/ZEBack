@@ -58,6 +58,10 @@ fn backup_steps() -> [&'static str; 4] {
 fn scope_steps() -> [&'static str; 4] {
     [t!("Auswahl", "Selection"), t!("Umfang", "Scope"), t!("Ziel", "Target"), t!("Start", "Start")]
 }
+/// Schritte für frei ausgewählte Dateien und Ordner
+fn files_steps() -> [&'static str; 4] {
+    [t!("Auswahl", "Selection"), t!("Dateien", "Files"), t!("Ziel", "Target"), t!("Start", "Start")]
+}
 fn restore_steps() -> [&'static str; 4] {
     [t!("Sicherung", "Backup"), t!("Inhalt", "Contents"), t!("Ziel", "Target"), t!("Start", "Start")]
 }
@@ -78,6 +82,8 @@ enum Tab {
 enum BackupMode {
     /// Ordner eines Benutzerprofils als ZIP
     Profile,
+    /// Frei ausgewählte Dateien und Ordner als ZIP
+    Files,
     /// Alle Dateien eines Laufwerks als ZIP
     Drive,
     /// Startfähiges Abbild des ganzen Systems (Windows-Abbildsicherung)
@@ -88,6 +94,8 @@ enum BackupMode {
 enum RestoreMode {
     /// In die Ordner eines Benutzerprofils
     Profile,
+    /// Frei ausgewählte Dateien und Ordner: jedes an seinen alten Platz
+    Original,
     /// Alles in einen frei gewählten Ordner
     Folder,
 }
@@ -289,6 +297,16 @@ fn pick_folder(title: &str) -> Option<PathBuf> {
     rfd::FileDialog::new().set_title(title).pick_folder()
 }
 
+/// Eine oder mehrere Dateien auswählen (leer, wenn abgebrochen wurde).
+fn pick_files(title: &str) -> Vec<PathBuf> {
+    rfd::FileDialog::new().set_title(title).pick_files().unwrap_or_default()
+}
+
+/// Anzeigename eines Pfads: der letzte Teil, bei einer Laufwerkswurzel der ganze Pfad.
+fn path_name(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
+}
+
 fn sidebar_width(window_width: f32) -> f32 {
     if window_width < COMPACT_BELOW { SIDEBAR_COMPACT } else { SIDEBAR_WIDTH }
 }
@@ -470,6 +488,7 @@ impl App {
         // Beim Neustart mit Administratorrechten wird die gewählte Sicherungsart mitgegeben.
         for argument in std::env::args().skip(1) {
             match argument.as_str() {
+                "--mode=files" => app.backup_mode = BackupMode::Files,
                 "--mode=drive" => app.backup_mode = BackupMode::Drive,
                 "--mode=image" => app.backup_mode = BackupMode::Image,
                 _ => {}
@@ -503,6 +522,17 @@ impl App {
                 app.std_rows.iter_mut().for_each(|r| r.checked = false);
                 app.opt_rows.iter_mut().for_each(|r| r.checked = false);
                 app.cfg.extra_folders = vec![ExtraFolder { path: dir.into(), enabled: true }];
+                app.request_sizes();
+            }
+            if let Ok(paths) = std::env::var("ZEBACK_FILES") {
+                // Sicherungsart "Dateien und Ordner" mit diesen Pfaden (durch ";" getrennt).
+                app.backup_mode = BackupMode::Files;
+                app.cfg.file_items = paths
+                    .split(';')
+                    .filter(|p| !p.is_empty())
+                    .map(|p| ExtraFolder { path: p.into(), enabled: true })
+                    .collect();
+                app.cfg.files_name = std::env::var("ZEBACK_FILES_NAME").unwrap_or_default();
                 app.request_sizes();
             }
             if let Ok(dir) = std::env::var("ZEBACK_LOCAL_DIR") {
@@ -668,7 +698,7 @@ impl App {
         for row in &self.opt_rows {
             self.sizes.request(&row.folder.path, row.folder.exclude);
         }
-        for folder in &self.cfg.extra_folders {
+        for folder in self.cfg.extra_folders.iter().chain(&self.cfg.file_items) {
             self.sizes.request(&folder.path, &[]);
         }
     }
@@ -704,13 +734,15 @@ impl App {
                     None => (0, true),
                 };
             }
-            BackupMode::Profile => {}
+            BackupMode::Profile | BackupMode::Files => {}
         }
-        let standard = self.std_rows.iter().filter(|r| r.checked).map(|r| &r.folder.path);
-        let optional = self.opt_rows.iter().filter(|r| r.checked).map(|r| &r.folder.path);
-        let extra = self.cfg.extra_folders.iter().filter(|f| f.enabled).map(|f| &f.path);
+        let files = self.backup_mode == BackupMode::Files;
+        let standard = self.std_rows.iter().filter(|r| !files && r.checked).map(|r| &r.folder.path);
+        let optional = self.opt_rows.iter().filter(|r| !files && r.checked).map(|r| &r.folder.path);
+        let extra = self.cfg.extra_folders.iter().filter(|f| !files && f.enabled).map(|f| &f.path);
+        let items = self.cfg.file_items.iter().filter(|f| files && f.enabled).map(|f| &f.path);
         let (mut bytes, mut pending) = (0u64, false);
-        for path in standard.chain(optional).chain(extra) {
+        for path in standard.chain(optional).chain(extra).chain(items) {
             match self.sizes.get(path) {
                 Some(Some(info)) => bytes += info.bytes_to_back_up(self.cfg.skip_online_only),
                 _ => pending = true,
@@ -1145,7 +1177,13 @@ impl App {
                 self.forget_file_selection();
                 self.chain = restore::chain_for(&info);
                 self.root_checked = vec![true; info.manifest.as_ref().map_or(0, |m| m.roots.len())];
-                self.restore_mode = if info.fits_profile() { RestoreMode::Profile } else { RestoreMode::Folder };
+                self.restore_mode = if info.fits_profile() {
+                    RestoreMode::Profile
+                } else if info.is_files_backup() {
+                    RestoreMode::Original
+                } else {
+                    RestoreMode::Folder
+                };
                 self.archive = Some(info);
                 self.switch_tab(Tab::Restore);
                 #[cfg(debug_assertions)]
@@ -1237,11 +1275,12 @@ impl App {
             Err(message) => return self.fail(message),
         };
         let id = self.cfg.next_job_id();
-        let name = if self.backup_mode == BackupMode::Drive {
+        let name = match self.backup_mode {
             // Der Name im Archiv bleibt deutsch ("Laufwerk-C"); der Auftrag heißt in der Sprache der Oberfläche.
-            t!(profile_name.replace('-', " "), profile_name.replace("Laufwerk-", "Drive "))
-        } else {
-            tr!("Profil {profile_name}", "Profile {profile_name}")
+            BackupMode::Drive => t!(profile_name.replace('-', " "), profile_name.replace("Laufwerk-", "Drive ")),
+            // Frei ausgewählte Dateien und Ordner: der Name, den die Sicherung bekommen hat.
+            BackupMode::Files => profile_name.clone(),
+            _ => tr!("Profil {profile_name}", "Profile {profile_name}"),
         };
         let job = SavedJob {
             id,
@@ -1487,6 +1526,9 @@ impl App {
     // ------------------------------------------------------------------ Sichern: Prüfen und Starten
 
     fn selected_source_count(&self) -> usize {
+        if self.backup_mode == BackupMode::Files {
+            return self.cfg.file_items.iter().filter(|f| f.enabled).count();
+        }
         if self.backup_mode != BackupMode::Profile {
             return 1;
         }
@@ -1529,12 +1571,21 @@ impl App {
         if self.backup_mode == BackupMode::Drive {
             return self.source_drive().map(|d| vec![d.title()]).unwrap_or_default();
         }
+        if self.backup_mode == BackupMode::Files {
+            return self.cfg.file_items.iter().filter(|f| f.enabled).map(|f| path_name(&f.path)).collect();
+        }
         let standard = self.std_rows.iter().filter(|r| r.checked).map(|r| r.folder.title().to_string());
         let optional = self.opt_rows.iter().filter(|r| r.checked).map(|r| r.folder.title().to_string());
-        let extra = self.cfg.extra_folders.iter().filter(|f| f.enabled).map(|f| {
-            f.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.path.display().to_string())
-        });
+        let extra = self.cfg.extra_folders.iter().filter(|f| f.enabled).map(|f| path_name(&f.path));
         standard.chain(optional).chain(extra).collect()
+    }
+
+    /// Name einer Sicherung frei ausgewählter Dateien und Ordner; er steht im Dateinamen.
+    fn files_backup_name(&self) -> String {
+        match self.cfg.files_name.trim() {
+            "" => t!("Dateien", "Files").to_string(),
+            name => name.to_string(),
+        }
     }
 
     fn check_backup_profile(&self) -> Result<&Profile, String> {
@@ -1556,6 +1607,9 @@ impl App {
                 let drive = self.source_drive().ok_or(t!("Kein Laufwerk ausgewählt", "No drive selected"))?;
                 Ok((format!("Laufwerk-{}", drive.letter().trim_end_matches(':')), PathBuf::new()))
             }
+            // Gehört zu keinem Profil: Der Profilordner bleibt leer, daran erkennt die
+            // Wiederherstellung diese Art von Sicherung.
+            BackupMode::Files => Ok((self.files_backup_name(), PathBuf::new())),
             _ => self.check_backup_profile().map(|p| (p.name.clone(), p.dir.clone())),
         }
     }
@@ -1581,6 +1635,36 @@ impl App {
                 exclude: Vec::new(),
                 exclude_paths,
             }]);
+        }
+        if self.backup_mode == BackupMode::Files {
+            // Liegt ein Zielordner in einem der gewählten Ordner, darf er sich nicht selbst sichern.
+            let targets: Vec<PathBuf> = self
+                .cfg
+                .targets
+                .iter()
+                .filter(|t| t.selected && t.kind == TargetKind::Local)
+                .map(|t| PathBuf::from(t.path.trim().trim_end_matches('\\')))
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect();
+            let sources: Vec<Source> = self
+                .cfg
+                .file_items
+                .iter()
+                .filter(|item| item.enabled)
+                .map(|item| {
+                    let mut source = Source::picked(item.path.clone());
+                    source.exclude_paths = targets.iter().filter(|target| target.starts_with(&item.path)).cloned().collect();
+                    source
+                })
+                .collect();
+            if sources.is_empty() {
+                return Err(t!(
+                    "Noch nichts ausgewählt\nFüge mindestens eine Datei oder einen Ordner hinzu.",
+                    "Nothing selected yet\nAdd at least one file or folder."
+                )
+                .to_string());
+            }
+            return Ok(sources);
         }
         let mut sources: Vec<Source> = self
             .std_rows
@@ -1696,7 +1780,7 @@ impl App {
                     t!("Kein Laufwerk ausgewählt\nBitte ein Laufwerk wählen.", "No drive selected\nPlease choose a drive.").to_string(),
                 )
             }
-            (0 | 1, BackupMode::Image) => Ok(()),
+            (0, BackupMode::Files) | (0 | 1, BackupMode::Image) => Ok(()),
             (1, _) => self.check_backup_sources().map(|_| ()),
             (2, BackupMode::Image) => self.check_image_target().map(|_| ()),
             (2, _) => self.check_backup_target().map(|_| ()),
@@ -1732,6 +1816,7 @@ impl App {
     fn restart_as_admin(&mut self) {
         let mode = match self.backup_mode {
             BackupMode::Profile => "profile",
+            BackupMode::Files => "files",
             BackupMode::Drive => "drive",
             BackupMode::Image => "image",
         };
@@ -1779,6 +1864,7 @@ impl App {
             RestoreMode::Profile => {
                 self.profiles.get(self.restore_profile).map(|p| restore::target_for(manifest, root, p))
             }
+            RestoreMode::Original => Some(PathBuf::from(&root.original_path)),
             RestoreMode::Folder => {
                 let dir = self.restore_dir.trim();
                 (!dir.is_empty()).then(|| PathBuf::from(dir).join(&root.name))
@@ -1845,9 +1931,21 @@ impl App {
         Ok(())
     }
 
+    /// Geht die Wiederherstellung in einen frei gewählten Ordner? Das gilt auch, wenn die
+    /// gewählte Art zur geöffneten Sicherung nicht passt (z. B. bei einem fremden ZIP).
+    fn restore_into_folder(&self, info: &ArchiveInfo) -> bool {
+        match self.restore_mode {
+            RestoreMode::Folder => true,
+            RestoreMode::Profile => !info.fits_profile(),
+            RestoreMode::Original => !info.is_files_backup(),
+        }
+    }
+
     fn check_restore_target(&self) -> Result<(), String> {
         let info = self.check_restore_archive()?;
-        if self.restore_mode == RestoreMode::Folder || !info.fits_profile() {
+        if self.restore_mode == RestoreMode::Original && info.is_files_backup() {
+            // Jede Datei kennt ihren alten Platz: nichts weiter anzugeben.
+        } else if self.restore_into_folder(info) {
             if self.restore_dir.trim().is_empty() {
                 return Err(t!(
                     "Zielordner fehlt\nWähle aus, wohin die Dateien sollen.",
@@ -2328,8 +2426,11 @@ impl App {
                             // Die Schrittanzeige bleibt stehen; nur der Inhalt darunter bewegt sich.
                             match self.tab {
                                 Tab::Backup => {
-                                    let labels =
-                                        if self.backup_mode == BackupMode::Profile { backup_steps() } else { scope_steps() };
+                                    let labels = match self.backup_mode {
+                                        BackupMode::Profile => backup_steps(),
+                                        BackupMode::Files => files_steps(),
+                                        BackupMode::Drive | BackupMode::Image => scope_steps(),
+                                    };
                                     if let Some(step) = widgets::stepper(ui, "backup_steps", &labels, self.backup_step) {
                                         self.go_to_step(step);
                                     }
@@ -2399,11 +2500,23 @@ impl App {
                     0,
                     t!("Was soll gesichert werden?", "What do you want to back up?"),
                     t!(
-                        "Die Dateien eines Benutzers, ein ganzes Laufwerk oder den kompletten PC.",
-                        "One user's files, a whole drive or the complete PC."
+                        "Die Dateien eines Benutzers, einzelne Dateien und Ordner, ein ganzes Laufwerk oder den kompletten PC.",
+                        "One user's files, single files and folders, a whole drive or the complete PC."
                     ),
                 );
                 self.two_columns(ui, Self::card_backup_mode, Self::card_backup_subject);
+            }
+            (1, BackupMode::Files) => {
+                step_heading(
+                    ui,
+                    1,
+                    t!("Welche Dateien und Ordner?", "Which files and folders?"),
+                    t!(
+                        "Füge hinzu, was gesichert werden soll – auch von anderen Laufwerken.",
+                        "Add what you want to back up – from other drives too."
+                    ),
+                );
+                self.two_columns(ui, Self::card_file_items, Self::card_files_name);
             }
             (1, BackupMode::Profile) => {
                 let name = self.profiles.get(self.backup_profile).map(|p| p.name.clone()).unwrap_or_default();
@@ -2507,6 +2620,12 @@ impl App {
                     t!("Benutzerprofil", "User profile"),
                     t!("Dokumente, Bilder, Desktop und mehr", "Documents, pictures, desktop and more"),
                 ),
+                (
+                    BackupMode::Files,
+                    Icon::Folder,
+                    t!("Dateien und Ordner", "Files and folders"),
+                    t!("Nur das, was du selbst auswählst", "Only what you pick yourself"),
+                ),
                 (BackupMode::Drive, Icon::Drive, t!("Ganzes Laufwerk", "Whole drive"), t!("Alle Dateien eines Laufwerks", "All files on a drive")),
                 (
                     BackupMode::Image,
@@ -2553,6 +2672,35 @@ impl App {
                 if admin {
                     self.restart_as_admin();
                 }
+            }
+            BackupMode::Files => {
+                let count = self.cfg.file_items.iter().filter(|f| f.enabled).count();
+                widgets::card(ui, |ui| {
+                    widgets::card_header(ui, Icon::Folder, t!("Dateien und Ordner", "Files and folders"), "", None);
+                    for line in [
+                        t!(
+                            "Sichert genau das, was du auswählst: einzelne Dateien, ganze Ordner oder beides.",
+                            "Backs up exactly what you pick: single files, whole folders or both."
+                        ),
+                        t!(
+                            "Sie dürfen überall liegen – auch auf einem anderen Laufwerk oder einem USB-Stick.",
+                            "They can be anywhere – on another drive or a USB stick too."
+                        ),
+                        t!(
+                            "Beim Wiederherstellen kommt alles an seinen alten Platz oder in einen Ordner deiner Wahl.",
+                            "When restoring, everything goes back to its old place or into a folder of your choice."
+                        ),
+                    ] {
+                        ui.horizontal_top(|ui| {
+                            widgets::text(ui, ">", theme::bold(13.0), ACCENT);
+                            ui.add(egui::Label::new(RichText::new(line).font(theme::regular(13.0)).color(TEXT)).wrap());
+                        });
+                    }
+                    if count > 0 {
+                        ui.add_space(6.0);
+                        widgets::kv_row(ui, t!("Schon ausgewählt", "Already picked"), &count.to_string());
+                    }
+                });
             }
             BackupMode::Drive => {
                 let mut chosen = None;
@@ -3168,6 +3316,112 @@ impl App {
         });
     }
 
+    /// Sicherungsart "Dateien und Ordner": die Liste dessen, was gesichert wird.
+    fn card_file_items(&mut self, ui: &mut Ui) {
+        let total = self.cfg.file_items.len();
+        let selected = self.cfg.file_items.iter().filter(|f| f.enabled).count();
+        let badge = format!("{selected}/{total}");
+        let (mut add_files, mut add_folder) = (false, false);
+        widgets::card(ui, |ui| {
+            widgets::card_header(
+                ui,
+                Icon::Folder,
+                t!("Dateien und Ordner", "Files and folders"),
+                t!("Das kommt in die Sicherung", "This goes into the backup"),
+                Some(&badge),
+            );
+            ui.spacing_mut().item_spacing.y = 2.0;
+            if self.cfg.file_items.is_empty() {
+                widgets::text(
+                    ui,
+                    t!(
+                        "Noch nichts ausgewählt. Füge Dateien oder Ordner hinzu.",
+                        "Nothing picked yet. Add files or folders."
+                    ),
+                    theme::regular(13.0),
+                    TEXT_MUTED,
+                );
+            }
+            let mut remove = None;
+            let sizes: Vec<Option<String>> = self.cfg.file_items.iter().map(|f| self.size_label(&f.path)).collect();
+            for ((index, item), size) in self.cfg.file_items.iter_mut().enumerate().zip(sizes) {
+                let icon = if item.path.is_file() { Icon::Documents } else { Icon::Folder };
+                let path = item.path.display().to_string();
+                let removed = ui
+                    .push_id(("file_item", &path), |ui| {
+                        widgets::check_row(ui, &mut item.enabled, icon, &path_name(&item.path), &path, size.as_deref(), true)
+                    })
+                    .inner;
+                if removed {
+                    remove = Some(index);
+                }
+            }
+            if let Some(index) = remove {
+                self.cfg.file_items.remove(index);
+            }
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                add_files = widgets::button(ui, t!("Dateien hinzufügen", "Add files"), Kind::Secondary, Some(Icon::Add)).clicked();
+                add_folder = widgets::button(ui, t!("Ordner hinzufügen", "Add folder"), Kind::Secondary, Some(Icon::Add)).clicked();
+            });
+        });
+        let picked = if add_files {
+            pick_files(t!("Dateien zum Sichern auswählen", "Choose files to back up"))
+        } else if add_folder {
+            pick_folder(t!("Ordner zum Sichern auswählen", "Choose a folder to back up")).into_iter().collect()
+        } else {
+            Vec::new()
+        };
+        for path in picked {
+            if !self.cfg.file_items.iter().any(|f| f.path == path) {
+                self.sizes.request(&path, &[]);
+                self.cfg.file_items.push(ExtraFolder { path, enabled: true });
+            }
+        }
+    }
+
+    /// Sicherungsart "Dateien und Ordner": Name der Sicherung.
+    fn card_files_name(&mut self, ui: &mut Ui) {
+        widgets::card(ui, |ui| {
+            widgets::card_header(
+                ui,
+                Icon::Zip,
+                t!("Name der Sicherung", "Name of the backup"),
+                t!("Daran erkennst du sie später wieder", "So you recognise it later"),
+                None,
+            );
+            let width = ui.available_width();
+            widgets::text_field(
+                ui,
+                "files_name",
+                &mut self.cfg.files_name,
+                t!("z. B. Projekte oder Steuer 2026", "e.g. Projects or Taxes 2026"),
+                false,
+                width,
+            );
+            ui.add_space(6.0);
+            widgets::text(
+                ui,
+                tr!(
+                    "Die Sicherung heißt dann: {}",
+                    "The backup will be called: {}",
+                    backup::archive_file_name(&self.files_backup_name(), false)
+                ),
+                theme::regular(12.0),
+                TEXT_MUTED,
+            );
+            widgets::text(
+                ui,
+                t!(
+                    "Gib verschiedenen Sicherungen verschiedene Namen. So räumt ein Auftrag nur seine eigenen alten Sicherungen weg.",
+                    "Give different backups different names. That way a job only clears out its own old backups."
+                ),
+                theme::regular(12.0),
+                TEXT_MUTED,
+            );
+        });
+    }
+
     /// Schritt "Ziel" für ZIP-Sicherungen: die eingerichteten Sicherungsziele zum Anhaken.
     fn card_target(&mut self, ui: &mut Ui) {
         let mut add_folder = false;
@@ -3342,6 +3596,14 @@ impl App {
                     },
                 );
                 widgets::kv_row(ui, t!("Datenmenge", "Amount of data"), &self.selected_size_text());
+            } else if self.backup_mode == BackupMode::Files {
+                widgets::kv_row(ui, t!("Art", "Type"), t!("Dateien und Ordner", "Files and folders"));
+                widgets::kv_row(ui, t!("Name", "Name"), &identity);
+                widgets::kv_row(ui, t!("Ausgewählt", "Picked"), &format!("{}", names.len()));
+                widgets::kv_row(ui, t!("Datenmenge", "Amount of data"), &self.selected_size_text());
+                ui.add(
+                    egui::Label::new(RichText::new(names.join(", ")).font(theme::regular(12.0)).color(TEXT_MUTED)).wrap(),
+                );
             } else {
                 widgets::kv_row(ui, t!("Art", "Type"), t!("Benutzerprofil", "User profile"));
                 widgets::kv_row(ui, t!("Profil", "Profile"), &identity);
@@ -3535,10 +3797,17 @@ impl App {
                     ui,
                     2,
                     t!("Wohin soll wiederhergestellt werden?", "Where do you want to restore to?"),
-                    t!(
-                        "Zurück in die Ordner eines Benutzers oder in einen Ordner deiner Wahl.",
-                        "Back into a user's folders or into a folder of your choice."
-                    ),
+                    if info.is_files_backup() {
+                        t!(
+                            "Zurück an den alten Platz oder in einen Ordner deiner Wahl.",
+                            "Back to the old place or into a folder of your choice."
+                        )
+                    } else {
+                        t!(
+                            "Zurück in die Ordner eines Benutzers oder in einen Ordner deiner Wahl.",
+                            "Back into a user's folders or into a folder of your choice."
+                        )
+                    },
                 );
                 self.card_restore_target(ui, &info);
             }
@@ -3630,9 +3899,15 @@ impl App {
                     .map(|d| d.format("%d.%m.%Y, %H:%M").to_string())
                     .unwrap_or_else(|_| manifest.created.clone());
                 widgets::kv_row(ui, t!("Erstellt", "Created"), &created);
-                widgets::kv_row(ui, t!("Profil", "Profile"), &manifest.user);
-                widgets::kv_row(ui, t!("Computer", "Computer"), &manifest.computer);
-                widgets::kv_row(ui, t!("Ordner", "Folders"), &manifest.roots.len().to_string());
+                if info.is_files_backup() {
+                    widgets::kv_row(ui, t!("Name", "Name"), &manifest.user);
+                    widgets::kv_row(ui, t!("Computer", "Computer"), &manifest.computer);
+                    widgets::kv_row(ui, t!("Dateien und Ordner", "Files and folders"), &manifest.roots.len().to_string());
+                } else {
+                    widgets::kv_row(ui, t!("Profil", "Profile"), &manifest.user);
+                    widgets::kv_row(ui, t!("Computer", "Computer"), &manifest.computer);
+                    widgets::kv_row(ui, t!("Ordner", "Folders"), &manifest.roots.len().to_string());
+                }
             } else {
                 widgets::kv_row(ui, t!("Herkunft", "Origin"), t!("nicht von ZEBack", "not from ZEBack"));
             }
@@ -3701,15 +3976,25 @@ impl App {
         self.root_checked.resize(manifest.roots.len(), true);
         let badge = format!("{}/{}", self.root_checked.iter().filter(|c| **c).count(), manifest.roots.len());
         widgets::card(ui, |ui| {
-            widgets::card_header(ui, Icon::Folder, t!("Ordner in der Sicherung", "Folders in the backup"), "", Some(&badge));
+            let title = if info.is_files_backup() {
+                t!("Dateien und Ordner in der Sicherung", "Files and folders in the backup")
+            } else {
+                t!("Ordner in der Sicherung", "Folders in the backup")
+            };
+            widgets::card_header(ui, Icon::Folder, title, "", Some(&badge));
             ui.spacing_mut().item_spacing.y = 2.0;
             for (index, root) in manifest.roots.iter().enumerate() {
-                let subtitle = tr!("{} Dateien · aus {}", "{} files · from {}", root.files, root.original_path);
+                let single_file = root.kind.as_deref() == Some(backup::KIND_FILE);
+                let subtitle = if single_file {
+                    tr!("Datei · aus {}", "File · from {}", root.original_path)
+                } else {
+                    tr!("{} Dateien · aus {}", "{} files · from {}", root.files, root.original_path)
+                };
                 ui.push_id(index, |ui| {
                     widgets::check_row(
                         ui,
                         &mut self.root_checked[index],
-                        std_icon(root.kind.as_deref()),
+                        if single_file { Icon::Documents } else { std_icon(root.kind.as_deref()) },
                         &root.name,
                         &subtitle,
                         Some(&fmt_bytes(root.bytes)),
@@ -3817,6 +4102,32 @@ impl App {
                 {
                     self.restore_mode = RestoreMode::Folder;
                 }
+            } else if info.is_files_backup() {
+                widgets::card_header(ui, Icon::Home, t!("Ziel", "Target"), "", None);
+                if widgets::option_row(
+                    ui,
+                    self.restore_mode == RestoreMode::Original,
+                    Mark::Radio,
+                    Icon::Restore,
+                    t!("An den alten Platz", "Back to the old place"),
+                    t!("Jede Datei kommt dorthin, wo sie vorher lag", "Every file goes where it was before"),
+                )
+                .clicked()
+                {
+                    self.restore_mode = RestoreMode::Original;
+                }
+                if widgets::option_row(
+                    ui,
+                    self.restore_mode == RestoreMode::Folder,
+                    Mark::Radio,
+                    Icon::Folder,
+                    t!("Anderer Ordner", "Another folder"),
+                    t!("Alles gesammelt in einen Ordner legen", "Put everything together into one folder"),
+                )
+                .clicked()
+                {
+                    self.restore_mode = RestoreMode::Folder;
+                }
             } else {
                 widgets::card_header(
                     ui,
@@ -3826,7 +4137,7 @@ impl App {
                     None,
                 );
             }
-            if self.restore_mode == RestoreMode::Folder || !info.fits_profile() {
+            if self.restore_into_folder(info) {
                 ui.horizontal(|ui| {
                     let button = widgets::button_width(ui, t!("Auswählen", "Browse"), Kind::Secondary, true);
                     let width = ui.available_width() - button - ui.spacing().item_spacing.x;
@@ -3924,7 +4235,7 @@ impl App {
                         manifest.roots.iter().zip(&self.root_checked).filter(|(_, c)| **c).map(|(r, _)| r).collect();
                     widgets::kv_row(
                         ui,
-                        t!("Ordner", "Folders"),
+                        if info.is_files_backup() { t!("Ausgewählt", "Picked") } else { t!("Ordner", "Folders") },
                         &tr!("{} von {}", "{} of {}", selected.len(), manifest.roots.len()),
                     );
                     let target = match self.restore_mode {
@@ -3933,6 +4244,7 @@ impl App {
                             .get(self.restore_profile)
                             .map(|p| tr!("Profil {}", "Profile {}", p.name))
                             .unwrap_or_default(),
+                        RestoreMode::Original => t!("alter Platz", "old place").to_string(),
                         RestoreMode::Folder => self.restore_dir.trim().to_string(),
                     };
                     widgets::kv_row(ui, t!("Ziel", "Target"), &target);
@@ -4624,6 +4936,10 @@ impl App {
             Some(source) if source.kind.as_deref() == Some("drive") => {
                 tr!("{} (ganzes Laufwerk)", "{} (whole drive)", source.path.display())
             }
+            // Frei ausgewählte Dateien und Ordner gehören zu keinem Profil.
+            Some(_) if job.profile_dir.as_os_str().is_empty() => {
+                tr!("{} · {} ausgewählt", "{} · {} picked", job.profile_name, job.sources.len())
+            }
             _ => tr!("{} · {} Ordner", "{} · {} folders", job.profile_name, job.sources.len()),
         };
         let target_names: Vec<String> = job
@@ -4918,6 +5234,15 @@ impl App {
                                 self.source_drive().map(|d| tr!("Laufwerk: {}", "Drive: {}", d.title())).unwrap_or_default()
                             }
                             (0, BackupMode::Image) => t!("Systemabbild", "System image").to_string(),
+                            (0, BackupMode::Files) => t!("Dateien und Ordner", "Files and folders").to_string(),
+                            (1, BackupMode::Files) => {
+                                tr!(
+                                    "{} ausgewählt · {}",
+                                    "{} picked · {}",
+                                    self.selected_source_count(),
+                                    self.selected_size_text()
+                                )
+                            }
                             (1, BackupMode::Profile) => {
                                 tr!(
                                     "{} Ordner ausgewählt · {}",
@@ -4957,6 +5282,9 @@ impl App {
                         let hint = match (&self.archive, self.restore_step) {
                             (None, _) => t!("noch keine Sicherung geöffnet", "no backup opened yet").to_string(),
                             (Some(info), 0) => info.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                            (Some(info), 1) if info.is_files_backup() => {
+                                tr!("{} ausgewählt", "{} picked", self.root_checked.iter().filter(|c| **c).count())
+                            }
                             (Some(info), 1) if info.manifest.is_some() => {
                                 tr!("{} Ordner ausgewählt", "{} folders selected", self.root_checked.iter().filter(|c| **c).count())
                             }
@@ -4967,6 +5295,7 @@ impl App {
                                     .get(self.restore_profile)
                                     .map(|p| tr!("Ziel: Profil {}", "Target: profile {}", p.name))
                                     .unwrap_or_default(),
+                                RestoreMode::Original => t!("Ziel: alter Platz", "Target: old place").to_string(),
                                 RestoreMode::Folder => t!("Ziel: anderer Ordner", "Target: another folder").to_string(),
                             },
                             _ => t!("Bereit zum Start", "Ready to start").to_string(),

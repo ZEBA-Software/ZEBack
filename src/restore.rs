@@ -37,10 +37,20 @@ impl ArchiveInfo {
         self.manifest.as_ref().is_some_and(|m| m.roots.iter().any(|r| r.kind.as_deref() == Some("drive")))
     }
 
+    /// Sicherung frei ausgewählter Dateien und Ordner (Sicherungsart "Dateien und Ordner"):
+    /// Sie gehört zu keinem Benutzerprofil und kennt nur die alten Pfade.
+    pub fn is_files_backup(&self) -> bool {
+        self.manifest.as_ref().is_some_and(|m| {
+            m.profile_dir.is_empty()
+                && m.roots.iter().all(|r| matches!(r.kind.as_deref(), None | Some(crate::backup::KIND_FILE)))
+        })
+    }
+
     /// Lässt sich die Sicherung in die Ordner eines Benutzerprofils zurückspielen?
-    /// Laufwerkssicherungen und fremde ZIP-Dateien gehen nur in einen frei gewählten Ordner.
+    /// Laufwerkssicherungen und fremde ZIP-Dateien gehen nur in einen frei gewählten Ordner,
+    /// frei ausgewählte Dateien und Ordner an ihren alten Platz oder in einen Ordner.
     pub fn fits_profile(&self) -> bool {
-        self.manifest.is_some() && !self.is_drive_backup()
+        self.manifest.is_some() && !self.is_drive_backup() && !self.is_files_backup()
     }
 }
 
@@ -318,7 +328,10 @@ pub fn run(job: &RestoreJob, rep: &Reporter) -> Result<RestoreSummary> {
                 let Some(Component::Normal(first)) = components.next() else { continue };
                 // Nicht ausgewählte Ordner und die Inhaltsbeschreibung auslassen.
                 let Some(dest) = roots.get(first.to_string_lossy().as_ref()) else { continue };
-                dest.join(components.as_path())
+                let rest = components.as_path();
+                // Eine einzeln gesicherte Datei liegt auf der obersten Ebene: Ihr Ziel ist dann
+                // schon der ganze Dateipfad (ein leerer Rest würde einen "\" anhängen).
+                if rest.as_os_str().is_empty() { dest.clone() } else { dest.join(rest) }
             }
         };
 
@@ -612,6 +625,162 @@ mod tests {
             assert!(diff <= Duration::from_secs(2), "{diff:?}");
             let _ = fs::remove_dir_all(base);
         }
+    }
+
+    #[test]
+    fn single_files_and_folders_are_backed_up_and_restored() {
+        let base = temp_dir("dateien");
+        let folder = base.join("quelle").join("Projekte");
+        let letter = base.join("quelle").join("Post").join("Brief.txt");
+        let other_letter = base.join("quelle").join("Alt").join("Brief.txt");
+        let plain = base.join("quelle").join("ohne-endung");
+        write(&folder.join("plan.txt"), b"Plan");
+        write(&folder.join("tief").join("skizze.txt"), b"Skizze");
+        write(&letter, b"neuer Brief");
+        write(&other_letter, b"alter Brief");
+        write(&plain, b"ohne Endung");
+
+        let job = BackupJob {
+            profile_name: "Auswahl".into(),
+            profile_dir: PathBuf::new(),
+            sources: vec![
+                Source::picked(folder.clone()),
+                Source::picked(letter.clone()),
+                Source::picked(other_letter.clone()),
+                Source::picked(plain.clone()),
+                // Als Datei ausgewählt, inzwischen gelöscht: wird mit Hinweis ausgelassen.
+                Source::plain(base.join("quelle").join("weg.txt"), Some(crate::backup::KIND_FILE.into())),
+            ],
+            destinations: vec![Destination::folder(base.join("ziel"))],
+            compression: Compression::Normal,
+            skip_online_only: true,
+            verify: true,
+            password: None,
+            incremental: None,
+        };
+        let (rep, rx, _cancel) = Reporter::new(|| {});
+        let summary = backup::run(&job, &rep).unwrap();
+        assert_eq!((summary.files, summary.skipped_errors), (5, 0));
+        let warnings: Vec<String> =
+            rx.try_iter().filter_map(|m| if let Msg::Warn(text) = m { Some(text) } else { None }).collect();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].starts_with("Datei nicht gefunden"), "{warnings:?}");
+        let zip_path = summary.local_path.unwrap();
+
+        let info = inspect(&zip_path).unwrap();
+        assert!(info.is_files_backup() && !info.fits_profile() && !info.is_drive_backup());
+        let manifest = info.manifest.clone().unwrap();
+        let roots: Vec<(&str, Option<&str>, u64)> =
+            manifest.roots.iter().map(|r| (r.name.as_str(), r.kind.as_deref(), r.files)).collect();
+        // Gleiche Dateinamen bekommen eine Nummer vor der Endung.
+        assert_eq!(
+            roots,
+            [
+                ("Projekte", None, 2),
+                ("Brief.txt", Some("file"), 1),
+                ("Brief (2).txt", Some("file"), 1),
+                ("ohne-endung", Some("file"), 1)
+            ]
+        );
+        // Einzelne Dateien liegen im Archiv auf der obersten Ebene.
+        let mut entries: Vec<String> = list_entries(&zip_path).unwrap().into_iter().map(|e| e.path).collect();
+        entries.sort();
+        assert_eq!(entries, ["Brief (2).txt", "Brief.txt", "Projekte/plan.txt", "Projekte/tief/skizze.txt", "ohne-endung"]);
+
+        let restore = |mapping: HashMap<String, PathBuf>, only: Option<HashSet<String>>| {
+            let job = RestoreJob {
+                archive: zip_path.clone(),
+                mapping: Mapping::Roots(mapping),
+                conflict: Conflict::Overwrite,
+                total_bytes: info.total_bytes,
+                password: None,
+                only,
+            };
+            let (rep, rx, _cancel) = Reporter::new(|| {});
+            let summary = run(&job, &rep).unwrap();
+            assert!(!rx.try_iter().any(|m| matches!(m, Msg::Warn(_))));
+            assert_eq!(summary.failed, 0);
+            summary.restored
+        };
+
+        // In einen anderen Ordner: Ordner und Dateien liegen nebeneinander.
+        let out = base.join("anderswo");
+        let mapping = manifest.roots.iter().map(|r| (r.name.clone(), out.join(&r.name))).collect();
+        assert_eq!(restore(mapping, None), 5);
+        assert_eq!(fs::read(out.join("Brief.txt")).unwrap(), b"neuer Brief");
+        assert_eq!(fs::read(out.join("Brief (2).txt")).unwrap(), b"alter Brief");
+        assert_eq!(fs::read(out.join("ohne-endung")).unwrap(), b"ohne Endung");
+        assert_same_tree(&folder, &out.join("Projekte"));
+
+        // An den alten Platz: Jede Datei kommt genau dorthin zurück, auch wenn sie fehlt.
+        fs::remove_dir_all(base.join("quelle")).unwrap();
+        let mapping: HashMap<String, PathBuf> =
+            manifest.roots.iter().map(|r| (r.name.clone(), PathBuf::from(&r.original_path))).collect();
+        // Erst nur eine einzelne Datei …
+        assert_eq!(restore(mapping.clone(), Some(HashSet::from(["Brief (2).txt".to_string()]))), 1);
+        assert_eq!(fs::read(&other_letter).unwrap(), b"alter Brief");
+        assert!(!letter.exists() && !folder.exists());
+        // … dann alles.
+        assert_eq!(restore(mapping, None), 5);
+        assert_eq!(fs::read(&letter).unwrap(), b"neuer Brief");
+        assert_eq!(fs::read(&plain).unwrap(), b"ohne Endung");
+        assert_eq!(fs::read(folder.join("tief").join("skizze.txt")).unwrap(), b"Skizze");
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn single_files_work_with_partial_backups() {
+        use crate::backup::{BackupKind, Incremental};
+        let base = temp_dir("dateien-teil");
+        let letter = base.join("quelle").join("Brief.txt");
+        let list = base.join("quelle").join("Liste.txt");
+        write(&letter, b"erste Fassung");
+        write(&list, b"eins");
+        let job = BackupJob {
+            profile_name: "Auswahl".into(),
+            profile_dir: PathBuf::new(),
+            sources: vec![Source::picked(letter.clone()), Source::picked(list.clone())],
+            destinations: vec![Destination::folder(base.join("ziel"))],
+            compression: Compression::Fast,
+            skip_online_only: true,
+            verify: true,
+            password: None,
+            incremental: Some(Incremental { state_file: base.join("stand.json"), full_every: 3 }),
+        };
+        let (rep, _rx, _cancel) = Reporter::new(|| {});
+        let full = backup::run(&job, &rep).unwrap();
+        assert_eq!((full.kind, full.files), (BackupKind::Full, 2));
+        assert_eq!(backup::run(&job, &rep).unwrap().kind, BackupKind::Unchanged);
+
+        // Nur der geänderte Brief kommt in die Teilsicherung.
+        std::thread::sleep(Duration::from_millis(1100));
+        write(&letter, b"zweite, laengere Fassung");
+        let partial = backup::run(&job, &rep).unwrap();
+        assert_eq!((partial.kind, partial.files), (BackupKind::Partial, 1));
+        let partial_path = partial.local_path.unwrap();
+        let info = inspect(&partial_path).unwrap();
+        assert!(info.is_files_backup());
+
+        // Die Kette bringt beide Dateien im neuesten Stand an den alten Platz zurück.
+        let chain = chain_for(&info).expect("Kette vollständig");
+        assert_eq!(chain.len(), 2);
+        fs::remove_dir_all(base.join("quelle")).unwrap();
+        let manifest = info.manifest.clone().unwrap();
+        let template = RestoreJob {
+            archive: partial_path,
+            mapping: Mapping::Roots(
+                manifest.roots.iter().map(|r| (r.name.clone(), PathBuf::from(&r.original_path))).collect(),
+            ),
+            conflict: Conflict::Overwrite,
+            total_bytes: 0,
+            password: None,
+            only: None,
+        };
+        let summary = run_chain(&chain, &template, &rep).unwrap();
+        assert_eq!((summary.restored, summary.failed), (2, 0));
+        assert_eq!(fs::read(&letter).unwrap(), b"zweite, laengere Fassung");
+        assert_eq!(fs::read(&list).unwrap(), b"eins");
+        let _ = fs::remove_dir_all(base);
     }
 
     #[test]
