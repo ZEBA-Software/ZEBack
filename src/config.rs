@@ -293,13 +293,15 @@ impl SavedJob {
     }
 }
 
-/// Sprache der Oberfläche.
+/// Sprache der Oberfläche. Ohne eigene Wahl gilt Englisch.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Language {
-    /// Wie Windows: Deutsch auf einem deutschen System, sonst Englisch
-    #[default]
+    /// Vorgabe bis 0.17: wie Windows (Deutsch auf einem deutschen System, sonst Englisch).
+    /// Steht nur noch in vorhandenen Einstellungen – dort soll durch ein Update niemandem
+    /// die Sprache wechseln.
     Auto,
     German,
+    #[default]
     English,
 }
 
@@ -407,7 +409,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            language: Language::Auto,
+            language: Language::English,
             check_updates: true,
             notify: ReportMode::Errors,
             mail: MailSettings::default(),
@@ -607,6 +609,18 @@ pub fn delete_password(key: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn english_unless_a_language_is_stored() {
+        // Neue Installation oder Datei ohne Angabe: Englisch.
+        assert_eq!(Config::default().language, Language::English);
+        assert_eq!(serde_json::from_str::<Config>("{}").unwrap().language, Language::English);
+        // Was schon gespeichert ist, bleibt – auch "Auto" aus den Versionen bis 0.17.
+        for (stored, language) in [("Auto", Language::Auto), ("German", Language::German), ("English", Language::English)] {
+            let config: Config = serde_json::from_str(&format!(r#"{{"language": "{stored}"}}"#)).unwrap();
+            assert_eq!(config.language, language);
+        }
+    }
 
     #[test]
     fn migrates_folder_and_nextcloud_from_older_versions() {

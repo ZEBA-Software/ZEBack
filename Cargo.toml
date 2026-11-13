@@ -1,12 +1,12 @@
 [package]
 name = "zeback"
-version = "0.17.1"
+version = "0.18.0"
 edition = "2024"
 authors = ["ZEBA Software UG"]
 homepage = "https://zeba-software.de"
 license = "Apache-2.0"
 repository = "https://github.com/ZEBA-Software/ZEBack"
-description = "Backup- und Wiederherstellungstool für Windows: Benutzerprofile, Laufwerke und Systemabbilder"
+description = "Backup and restore tool for Windows: user profiles, drives and system images"
 
 [[bin]]
 name = "ZEBack"

@@ -4,7 +4,8 @@
 //! - `t!("Sichern", "Back up")` für feste Texte (ergibt `&'static str`),
 //! - `tr!("{n} Dateien", "{n} files")` für Texte mit Platzhaltern (ergibt `String`, wie `format!`).
 //!
-//! Ohne weitere Einstellung gilt Deutsch – so laufen auch die Tests.
+//! Das Programm startet auf Englisch, solange niemand Deutsch gewählt hat (`Config::language`).
+//! Nur solange `apply` noch nicht aufgerufen wurde, liefern die Makros Deutsch – so laufen die Tests.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -17,7 +18,8 @@ pub fn english() -> bool {
     ENGLISH.load(Ordering::Relaxed)
 }
 
-/// Stellt die Sprache ein; "Automatisch" richtet sich nach der Anzeigesprache von Windows.
+/// Stellt die Sprache ein. "Auto" aus älteren Einstellungen richtet sich nach der Anzeigesprache
+/// von Windows.
 pub fn apply(language: Language) {
     let english = match language {
         Language::German => false,
@@ -65,7 +67,7 @@ macro_rules! tr {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn german_is_the_default_and_placeholders_work() {
+    fn without_apply_texts_are_german_and_placeholders_work() {
         let n = 3;
         assert_eq!(t!("Sichern", "Back up"), "Sichern");
         assert_eq!(tr!("{n} Dateien", "{n} files"), "3 Dateien");
