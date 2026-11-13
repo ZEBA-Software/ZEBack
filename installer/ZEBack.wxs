@@ -5,10 +5,15 @@
   Die Architektur (x64 / arm64) kommt über "candle -arch".
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <!-- UpgradeCode NIE ändern: daran erkennt Windows bei Updates die Vorgängerversion. -->
+  <!--
+    UpgradeCode NIE ändern: daran erkennt Windows bei Updates die Vorgängerversion.
+    Der Assistent ist englisch (Language 1033, im Bauskript "-cultures:en-us"), wie die Vorgabe im
+    Programm. Bis 0.17 war er deutsch (1031); ein Update über die Sprachen hinweg funktioniert,
+    weil die Vorgängerversion nur am UpgradeCode erkannt wird.
+  -->
   <Product Id="*"
            Name="ZEBack"
-           Language="1031"
+           Language="1033"
            Codepage="1252"
            Version="$(var.Version)"
            Manufacturer="$(var.Manufacturer)"
@@ -18,10 +23,10 @@
              Compressed="yes"
              InstallScope="perMachine"
              Description="ZEBack $(var.Version) ($(sys.BUILDARCH))"
-             Comments="Backup und Wiederherstellung: Benutzerprofile, Laufwerke, Systemabbilder" />
+             Comments="Backup and restore: user profiles, drives, system images" />
 
     <!-- Neuere Version ersetzt die alte automatisch; ein Downgrade wird abgelehnt. -->
-    <MajorUpgrade DowngradeErrorMessage="Es ist bereits eine neuere Version von ZEBack installiert." />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ZEBack is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -42,7 +47,7 @@
     <Component Id="StartMenuEntry" Directory="ProgramMenuFolder" Guid="*">
       <Shortcut Id="StartMenuShortcut"
                 Name="ZEBack"
-                Description="Profile, Laufwerke und das System sichern und wiederherstellen"
+                Description="Back up and restore profiles, drives and the system"
                 Target="[INSTALLFOLDER]ZEBack.exe"
                 WorkingDirectory="INSTALLFOLDER" />
       <RegistryValue Root="HKCU"
@@ -67,7 +72,7 @@
     <WixVariable Id="WixUIBannerBmp" Value="$(var.BannerPath)" />
     <WixVariable Id="WixUIDialogBmp" Value="$(var.DialogPath)" />
     <WixVariable Id="WixUILicenseRtf" Value="$(var.LicensePath)" />
-    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="ZEBack jetzt starten" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Start ZEBack now" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
     <Property Id="WixShellExecTarget" Value="[#ZEBackExe]" />
     <CustomAction Id="LaunchApplication" BinaryKey="WixCA" DllEntry="WixShellExec" Impersonate="yes" />
@@ -88,6 +93,6 @@
     <Property Id="ARPURLINFOABOUT" Value="https://zeba-software.de" />
     <Property Id="ARPHELPLINK" Value="https://zeba-software.de" />
     <Property Id="ARPNOREPAIR" Value="1" />
-    <Property Id="ARPCOMMENTS" Value="Backup und Wiederherstellung: Benutzerprofile, Laufwerke, Systemabbilder" />
+    <Property Id="ARPCOMMENTS" Value="Backup and restore: user profiles, drives, system images" />
   </Product>
 </Wix>

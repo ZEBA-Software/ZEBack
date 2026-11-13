@@ -72,7 +72,8 @@ foreach ($target in $targets) {
     & (Join-Path $wix 'candle.exe') -nologo -arch $arch -ext WixUIExtension -ext WixUtilExtension "-dVersion=$version" "-dManufacturer=$Manufacturer" "-dExePath=$exe" "-dIconPath=$icon" "-dBannerPath=$banner" "-dDialogPath=$dialog" "-dLicensePath=$license" -out $wixobj $wxs
     if ($LASTEXITCODE -ne 0) { throw "candle fuer $arch fehlgeschlagen." }
 
-    & (Join-Path $wix 'light.exe') -nologo -spdb -ext WixUIExtension -ext WixUtilExtension -cultures:de-de -out $msi $wixobj
+    # Sprache des Assistenten: Englisch; muss zu Language="1033" in ZEBack.wxs passen.
+    & (Join-Path $wix 'light.exe') -nologo -spdb -ext WixUIExtension -ext WixUtilExtension -cultures:en-us -out $msi $wixobj
     if ($LASTEXITCODE -ne 0) { throw "light fuer $arch fehlgeschlagen." }
 
     # Die einzelne EXE zusaetzlich nach dist kopieren. Laeuft sie gerade, ist sie gesperrt:
